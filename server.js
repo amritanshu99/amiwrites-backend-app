@@ -17,6 +17,8 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/blogs", require("./routes/blogRoutes"));
 app.use("/api/portfolio", require("./routes/portfolioRoutes"));  // <-- Add portfolio routes here
+app.use("/api", require("./routes/newsRoutes"));
+
 
 // MongoDB Connection
 mongoose
