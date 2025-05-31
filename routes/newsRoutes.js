@@ -5,7 +5,7 @@ const NEWS_API_KEY = process.env.NEWS_API_KEY;
 
 router.get("/tech-news", async (req, res) => {
   try {
-    const url = `https://newsapi.org/v2/top-headlines?category=technology&apiKey=${NEWS_API_KEY}`;
+    const url = `https://gnews.io/api/v4/top-headlines?topic=technology&lang=en&country=in&apiKey=${NEWS_API_KEY}`;
     const response = await fetch(url);
 
     if (!response.ok) {
