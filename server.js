@@ -13,6 +13,9 @@ app.use(express.json());
 
 // Serve static files (e.g., images)
 app.use(express.static(path.join(__dirname, "public")));
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
 
 // API Routes
 app.use("/api/auth", require("./routes/authRoutes"));
