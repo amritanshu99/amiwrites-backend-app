@@ -74,7 +74,7 @@ const getPortfolio = (req, res) => {
     ],
     photoUrl: "/images/your-photo.png",
     socialLinks: {
-      linkedin: "www.linkedin.com/in/amritanshu-mishra-568598306",
+      linkedin: "https://www.linkedin.com/in/amritanshu-mishra-568598306/",
       github: "https://github.com/amritanshu99",
       instagram: "https://www.instagram.com/ami.mishra99/",
       facebook: "https://www.facebook.com/Ami.Mishra99",
