@@ -1,4 +1,3 @@
-// authController.js
 const User = require("../models/Users");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -6,6 +5,30 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
 const JWT_SECRET = process.env.JWT_SECRET || "yourSecretKey";
+
+// Setup reusable transporter object with Gmail SMTP
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER, // Your Gmail email
+    pass: process.env.EMAIL_PASS, // Your Gmail app password or regular password if less secure apps enabled
+  },
+});
+
+// Helper to send emails
+async function sendEmail({ to, subject, html }) {
+  try {
+    await transporter.sendMail({
+      from: `"AmiVerse Support" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      html,
+    });
+  } catch (error) {
+    console.error("Error sending email:", error);
+    // optionally continue without blocking signup/login
+  }
+}
 
 exports.signup = async (req, res) => {
   try {
@@ -19,7 +42,8 @@ exports.signup = async (req, res) => {
     const passwordRegex = /^(?=.*[0-9])(?=.*[!@#$%^&*])/;
     if (!password || password.length < 10 || !passwordRegex.test(password)) {
       return res.status(400).json({
-        message: "Password must be at least 10 characters long and include at least one number and one special character",
+        message:
+          "Password must be at least 10 characters long and include at least one number and one special character",
       });
     }
 
@@ -31,6 +55,20 @@ exports.signup = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ username, email, password: hashedPassword });
     await user.save();
+
+    // Send welcome email on signup
+    await sendEmail({
+      to: email,
+      subject: "Welcome to AmiVerse! Your new writing adventure begins here.",
+      html: `
+        <h2>Welcome, ${username}!</h2>
+        <p>Thank you for joining AmiVerse — a community where your creativity takes flight and your stories find their voice.</p>
+        <p>We’re thrilled to have you onboard as you embark on your writing journey. Whether you want to share your thoughts, publish your work, or just explore, AmiVerse is here to support you every step of the way.</p>
+        <p>If you ever need assistance or have questions, our support team is just an email away. We're excited to see what amazing content you'll create!</p>
+        <p>Happy writing and welcome to the family!</p>
+        <p>Best regards,<br/><strong>The AmiVerse Team</strong></p>
+      `,
+    });
 
     const token = jwt.sign(
       { id: user._id, username: user.username },
@@ -60,6 +98,20 @@ exports.login = async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    // Send "Welcome Back" email on login
+    await sendEmail({
+      to: user.email,
+      subject: "Welcome Back to AmiVerse! Keep creating your magic.",
+      html: `
+        <h2>Welcome back, ${username}!</h2>
+        <p>We’re so glad to see you again at AmiVerse.</p>
+        <p>Your passion for storytelling inspires us! Whether you’re here to write a new chapter or just to catch up, remember that your creative journey is important and we're here to support it.</p>
+        <p>Keep sharing your voice and creating amazing content. If there’s anything you need, don’t hesitate to reach out to our support team.</p>
+        <p>Thanks for being a part of AmiVerse!</p>
+        <p>Warm wishes,<br/><strong>The AmiVerse Team</strong></p>
+      `,
+    });
+
     res.json({ token });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -77,20 +129,15 @@ exports.requestPasswordReset = async (req, res) => {
     user.resetTokenExpiry = Date.now() + 3600000;
     await user.save();
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
-
     const resetURL = `http://localhost:3000/reset-password/${token}`;
 
-    await transporter.sendMail({
+    await sendEmail({
       to: user.email,
       subject: "Password Reset",
-      html: `<p>You requested a password reset.</p><p>Click <a href="${resetURL}">here</a> to reset your password. This link expires in 1 hour.</p>`,
+      html: `
+        <p>You requested a password reset.</p>
+        <p>Click <a href="${resetURL}">here</a> to reset your password. This link expires in 1 hour.</p>
+      `,
     });
 
     res.json({ message: "Password reset email sent" });
@@ -113,7 +160,8 @@ exports.resetPassword = async (req, res) => {
     const passwordRegex = /^(?=.*[0-9])(?=.*[!@#$%^&*])/;
     if (newPassword.length < 10 || !passwordRegex.test(newPassword)) {
       return res.status(400).json({
-        message: "Password must be at least 10 characters long and include at least one number and one special character",
+        message:
+          "Password must be at least 10 characters long and include at least one number and one special character",
       });
     }
 
