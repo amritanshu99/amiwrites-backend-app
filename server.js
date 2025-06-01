@@ -18,6 +18,7 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/blogs", require("./routes/blogRoutes"));
 app.use("/api/portfolio", require("./routes/portfolioRoutes"));  // <-- Add portfolio routes here
 app.use("/api", require("./routes/newsRoutes"));
+app.use("/api", require("./routes/contactRoutes"));
 
 
 // MongoDB Connection
