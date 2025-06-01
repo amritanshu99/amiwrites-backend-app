@@ -2,6 +2,10 @@ const Blog = require("../models/Blog");
 
 exports.createBlog = async (req, res) => {
   try {
+    if (req.user.username !== "amritanshu99") {
+      return res.status(403).json({ message: "Only admin can create blogs" });
+    }
+
     const blog = new Blog(req.body);
     await blog.save();
     res.status(201).json(blog);
@@ -33,6 +37,10 @@ exports.getBlogById = async (req, res) => {
 
 exports.deleteBlog = async (req, res) => {
   try {
+    if (req.user.username !== "amritanshu99") {
+      return res.status(403).json({ message: "Only admin can delete blogs" });
+    }
+
     const blog = await Blog.findByIdAndDelete(req.params.id);
     if (!blog) {
       return res.status(404).json({ error: "Blog not found" });
@@ -45,6 +53,10 @@ exports.deleteBlog = async (req, res) => {
 
 exports.deleteAllBlogs = async (req, res) => {
   try {
+    if (req.user.username !== "amritanshu99") {
+      return res.status(403).json({ message: "Only admin can delete all blogs" });
+    }
+
     await Blog.deleteMany({});
     res.json({ message: "All blogs deleted successfully" });
   } catch (err) {

@@ -1,9 +1,9 @@
+// authController.js
 const User = require("../models/Users");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
-
 
 const JWT_SECRET = process.env.JWT_SECRET || "yourSecretKey";
 
@@ -11,49 +11,39 @@ exports.signup = async (req, res) => {
   try {
     const { username, email, password } = req.body;
 
-    // Only allow admin signup
-    if (username !== "amritanshu99") {
-      return res.status(403).json({ message: "Signup allowed only for admin user" });
-    }
-
-    // Validate email
     const emailRegex = /^\S+@\S+\.\S+$/;
     if (!email || !emailRegex.test(email)) {
       return res.status(400).json({ message: "Please provide a valid email address" });
     }
 
-    // Validate password
     const passwordRegex = /^(?=.*[0-9])(?=.*[!@#$%^&*])/;
-    if (password.length < 10 || !passwordRegex.test(password)) {
+    if (!password || password.length < 10 || !passwordRegex.test(password)) {
       return res.status(400).json({
-        message:
-          "Password must be at least 10 characters long and include at least one number and one special character"
+        message: "Password must be at least 10 characters long and include at least one number and one special character",
       });
     }
 
-    // Check if user exists
     const existingUser = await User.findOne({ $or: [{ username }, { email }] });
-    if (existingUser) return res.status(400).json({ message: "User already exists" });
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
+    }
 
-    // Save new user
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ username, email, password: hashedPassword });
     await user.save();
 
-    // Generate JWT token
     const token = jwt.sign(
       { id: user._id, username: user.username },
       JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // Return token
     res.status(201).json({ message: "Signup successful", token });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Server error. Please try again later." });
   }
 };
-
 
 exports.login = async (req, res) => {
   try {
@@ -66,7 +56,7 @@ exports.login = async (req, res) => {
 
     const token = jwt.sign(
       { id: user._id, username: user.username },
-      process.env.JWT_SECRET,
+      JWT_SECRET,
       { expiresIn: "7d" }
     );
 
@@ -84,10 +74,9 @@ exports.requestPasswordReset = async (req, res) => {
 
     const token = crypto.randomBytes(32).toString("hex");
     user.resetToken = token;
-    user.resetTokenExpiry = Date.now() + 3600000; // 1 hour
+    user.resetTokenExpiry = Date.now() + 3600000;
     await user.save();
 
-    // Configure transport
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -101,8 +90,7 @@ exports.requestPasswordReset = async (req, res) => {
     await transporter.sendMail({
       to: user.email,
       subject: "Password Reset",
-      html: `<p>You requested a password reset.</p>
-             <p>Click <a href="${resetURL}">here</a> to reset your password. This link expires in 1 hour.</p>`,
+      html: `<p>You requested a password reset.</p><p>Click <a href="${resetURL}">here</a> to reset your password. This link expires in 1 hour.</p>`,
     });
 
     res.json({ message: "Password reset email sent" });
@@ -122,12 +110,10 @@ exports.resetPassword = async (req, res) => {
 
     if (!user) return res.status(400).json({ message: "Invalid or expired token" });
 
-    // Password validation
     const passwordRegex = /^(?=.*[0-9])(?=.*[!@#$%^&*])/;
     if (newPassword.length < 10 || !passwordRegex.test(newPassword)) {
       return res.status(400).json({
-        message:
-          "Password must be at least 10 characters long and include at least one number and one special character",
+        message: "Password must be at least 10 characters long and include at least one number and one special character",
       });
     }
 
