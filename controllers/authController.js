@@ -122,29 +122,47 @@ exports.requestPasswordReset = async (req, res) => {
   try {
     const { email } = req.body;
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "User not found" });
+
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
 
     const token = crypto.randomBytes(32).toString("hex");
     user.resetToken = token;
-    user.resetTokenExpiry = Date.now() + 3600000;
+    user.resetTokenExpiry = Date.now() + 3600000; // 1 hour
     await user.save();
 
-    const resetURL = `http://localhost:3000/reset-password/${token}`;
+    // ✅ Use production reset URL
+    const resetURL = `https://www.amiverse.in/reset-password/${token}`;
 
-    await sendEmail({
-      to: user.email,
-      subject: "Password Reset",
-      html: `
-        <p>You requested a password reset.</p>
-        <p>Click <a href="${resetURL}">here</a> to reset your password. This link expires in 1 hour.</p>
-      `,
-    });
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: "Password Reset",
+        html: `
+          <p>Hello ${user.username},</p>
+          <p>You requested a password reset.</p>
+          <p>Click <a href="${resetURL}">here</a> to reset your password. This link expires in 1 hour.</p>
+          <p>If you did not request this, please ignore this email.</p>
+          <br />
+          <p>Regards,<br/><strong>AmiVerse Team</strong></p>
+        `,
+      });
 
-    res.json({ message: "Password reset email sent" });
+      console.log(`✅ Password reset email sent to ${user.email}`);
+      res.json({ message: "Password reset email sent" });
+    } catch (emailErr) {
+      console.error("❌ Failed to send password reset email:", emailErr);
+      res.status(500).json({ message: "Failed to send password reset email" });
+    }
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ requestPasswordReset error:", err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 };
+
+
 
 exports.resetPassword = async (req, res) => {
   try {
