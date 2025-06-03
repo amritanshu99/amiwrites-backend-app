@@ -35,6 +35,7 @@ exports.getTechNews = async (req, res) => {
     const cachedData = newsCache.get(cacheKey);
 
     if (cachedData) {
+        console.log("Tech news served from cache")
       return res.json({ source: "cache", ...cachedData });
     }
 
