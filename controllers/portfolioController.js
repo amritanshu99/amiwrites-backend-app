@@ -1,15 +1,20 @@
-// controllers/portfolioController.js
+const cache = require("../utils/cache");
 
 const getPortfolio = (req, res) => {
+  const cachedData = cache.get("portfolio");
+  if (cachedData) {
+    console.log("🔁 Serving portfolio from cache");
+    return res.json(cachedData);
+  }
+
   const portfolioData = {
     name: "Amritanshu Mishra",
     description:
-     "Experienced software engineer with 6+ years in MERN stack development. As a language-agnostic technologist, I quickly master new technologies and excel in solving complex problems.\nA natural problem solver, I thrive on tackling complex challenges and devising innovative solutions. My passion for technology and continuous learning drives me to stay at the forefront of industry advancements. I am deeply committed to collaboration and teamwork, leveraging my skills to make a meaningful impact on every project I undertake.\n\nLet’s connect and explore how we can drive success and innovation together.",
+      "Experienced software engineer with 6+ years in MERN stack development. As a language-agnostic technologist, I quickly master new technologies and excel in solving complex problems.\nA natural problem solver, I thrive on tackling complex challenges and devising innovative solutions. My passion for technology and continuous learning drives me to stay at the forefront of industry advancements. I am deeply committed to collaboration and teamwork, leveraging my skills to make a meaningful impact on every project I undertake.\n\nLet’s connect and explore how we can drive success and innovation together.",
     title: "Full Stack Developer",
     email: "amritanshu99@gmail.com",
     phone: "+91 9149194704",
-    summary:
-      "",
+    summary: "",
     skills: [
       { skill: "JavaScript", expertise: "expert" },
       { skill: "React", expertise: "expert" },
@@ -18,7 +23,6 @@ const getPortfolio = (req, res) => {
       { skill: "MongoDB", expertise: "expert" },
       { skill: "GraphQL", expertise: "advanced" },
     ],
-
     experience: [
       {
         company: "GlobalLogic",
@@ -80,6 +84,10 @@ const getPortfolio = (req, res) => {
       facebook: "https://www.facebook.com/Ami.Mishra99",
     },
   };
+
+  // ✅ Cache the data for next time
+  cache.set("portfolio", portfolioData);
+  console.log("🗃️ Serving portfolio from DB and caching it");
 
   res.json(portfolioData);
 };

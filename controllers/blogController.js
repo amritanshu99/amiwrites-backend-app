@@ -1,5 +1,7 @@
 const Blog = require("../models/Blog");
+const cache = require("../utils/cache");
 
+// ✅ Create Blog (invalidates cache)
 exports.createBlog = async (req, res) => {
   try {
     if (req.user.username !== "amritanshu99") {
@@ -8,21 +10,38 @@ exports.createBlog = async (req, res) => {
 
     const blog = new Blog(req.body);
     await blog.save();
+
+    // ❌ Invalidate cache
+    cache.del("blogs");
+
     res.status(201).json(blog);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 };
 
+// ✅ Get All Blogs (with caching)
 exports.getBlogs = async (req, res) => {
   try {
+    const cachedBlogs = cache.get("blogs");
+    if (cachedBlogs) {
+      console.log("🔁 Serving from cache");
+      return res.json(cachedBlogs);
+    }
+
     const blogs = await Blog.find().sort({ date: -1 });
+
+    // ✅ Store in cache
+    cache.set("blogs", blogs);
+    console.log("🗃️ Serving from DB and caching result");
+
     res.json(blogs);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+// ✅ Get Blog by ID (no caching here)
 exports.getBlogById = async (req, res) => {
   try {
     const blog = await Blog.findById(req.params.id);
@@ -35,6 +54,7 @@ exports.getBlogById = async (req, res) => {
   }
 };
 
+// ✅ Delete Blog by ID (invalidates cache)
 exports.deleteBlog = async (req, res) => {
   try {
     if (req.user.username !== "amritanshu99") {
@@ -45,12 +65,17 @@ exports.deleteBlog = async (req, res) => {
     if (!blog) {
       return res.status(404).json({ error: "Blog not found" });
     }
+
+    // ❌ Invalidate cache
+    cache.del("blogs");
+
     res.json({ message: "Blog deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
+// ✅ Delete All Blogs (invalidates cache)
 exports.deleteAllBlogs = async (req, res) => {
   try {
     if (req.user.username !== "amritanshu99") {
@@ -58,6 +83,10 @@ exports.deleteAllBlogs = async (req, res) => {
     }
 
     await Blog.deleteMany({});
+
+    // ❌ Invalidate cache
+    cache.del("blogs");
+
     res.json({ message: "All blogs deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
