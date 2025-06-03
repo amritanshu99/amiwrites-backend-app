@@ -25,7 +25,7 @@ exports.getBlogs = async (req, res) => {
   try {
     const cachedBlogs = cache.get("blogs");
     if (cachedBlogs) {
-      console.log("🔁 Serving from cache");
+      console.log("🔁 Serving from cache Blogs");
       return res.json(cachedBlogs);
     }
 
@@ -33,7 +33,7 @@ exports.getBlogs = async (req, res) => {
 
     // ✅ Store in cache
     cache.set("blogs", blogs);
-    console.log("🗃️ Serving from DB and caching result");
+    console.log("🗃️ Serving from DB and caching result Blogs");
 
     res.json(blogs);
   } catch (err) {
