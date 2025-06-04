@@ -13,8 +13,8 @@ app.use(express.json());
 
 // Serve static files (e.g., images)
 app.use(express.static(path.join(__dirname, "public")));
-app.get('/ping', (req, res) => {
-  res.status(200).send('pong');
+app.get("/ping", (req, res) => {
+  res.status(200).send("pong");
 });
 
 // API Routes
@@ -23,6 +23,9 @@ app.use("/api/blogs", require("./routes/blogRoutes"));        // Blog routes (pr
 app.use("/api/portfolio", require("./routes/portfolioRoutes")); // Portfolio routes
 app.use("/api", require("./routes/newsRoutes"));              // News routes
 app.use("/api", require("./routes/contactRoutes"));           // Contact form
+
+// Gemini AI Routes
+app.use("/api/gemini", require("./routes/geminiRoutes"));
 
 // MongoDB Connection
 mongoose
