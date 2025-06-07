@@ -19,10 +19,12 @@ exports.createBlog = async (req, res) => {
 
     console.log('🔔 Sending notification for new blog:', blog.title);
 
-    await sendNotificationToAll(
-      '📝 New Blog Published!',
-      `Read "${blog.title}" on AmiVerse now!`
-    );
+ await sendNotificationToAll({
+  title: '📝 New Blog Published!',
+  body: `Read "${blog.title}" on AmiVerse now!`,
+  icon: 'https://www.amiverse.in/favicon.ico',
+  url: `https://www.amiverse.in/blog/` // or use a slug if you have one
+});
 
     res.status(201).json(blog);
   } catch (err) {

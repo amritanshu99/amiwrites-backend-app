@@ -22,19 +22,29 @@ exports.subscribe = async (req, res) => {
   }
 };
 
-exports.sendNotificationToAll = async (
+exports.sendNotificationToAll = async ({
   title = 'New Blog!',
-  body = 'Check out the latest post on AmiVerse!'
-) => {
+  body = 'Check out the latest post on AmiVerse!',
+  icon = 'https://www.amiverse.in/favicon.ico',
+  url = 'https://www.amiverse.in/blog'
+} = {}) => {
   try {
     const subscriptions = await Subscription.find();
     console.log(`📣 Sending push notifications to ${subscriptions.length} subscribers...`);
 
-    const payload = JSON.stringify({ title, body });
+    const payload = JSON.stringify({
+      notification: {
+        title,
+        body,
+        icon,
+        url
+      }
+    });
 
-    const sendAll = subscriptions.map((sub) =>
-      webpush.sendNotification(sub, payload).catch((err) => {
+    const sendAll = subscriptions.map(sub =>
+      webpush.sendNotification(sub, payload).catch(err => {
         console.error('❌ Push error', err);
+        // Optionally: remove invalid subscriptions from DB
       })
     );
 
@@ -44,3 +54,4 @@ exports.sendNotificationToAll = async (
     console.error('❌ Error sending notifications:', err);
   }
 };
+
