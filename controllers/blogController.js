@@ -11,26 +11,11 @@ exports.createBlog = async (req, res) => {
     const blog = new Blog(req.body);
     await blog.save();
 
-    // ❌ Invalidate cache
+    // Invalidate cache
     cache.del("blogs");
 
-    // ✅ Send push notification to all subscribers
-async function sendNotificationToAll() {
-  const payload = JSON.stringify({
-    title: 'New Blog Published!',
-    body: 'Check out the latest post on AmiVerse.',
-    url: '/' // optional URL to open on click
-  });
-
-  for (const sub of subscriptions) {
-    try {
-      await webpush.sendNotification(sub, payload);
-      console.log('Notification sent to', sub.endpoint);
-    } catch (err) {
-      console.error('Error sending notification', err);
-    }
-  }
-}
+    // Call the notification function here
+    await sendNotificationToAll();
 
     res.status(201).json(blog);
   } catch (err) {
