@@ -25,7 +25,7 @@ exports.subscribe = async (req, res) => {
 exports.sendNotificationToAll = async ({
   title = 'New Blog!',
   body = 'Check out the latest post on AmiVerse!',
-  icon = 'https://www.amiverse.in/favicon.ico',
+  icon = 'https://www.amiverse.in/images/favicon.ico',
   url = 'https://www.amiverse.in/blog'
 } = {}) => {
   try {

@@ -22,7 +22,7 @@ exports.createBlog = async (req, res) => {
  await sendNotificationToAll({
   title: '📝 New Blog Published!',
   body: `Read "${blog.title}" on AmiVerse now!`,
-  icon: 'https://www.amiverse.in/favicon.ico',
+  icon: 'https://www.amiverse.in/images/favicon.ico',
   url: `https://www.amiverse.in/blog/` // or use a slug if you have one
 });
 
