@@ -17,11 +17,13 @@ const getPortfolio = (req, res) => {
     summary: "",
     skills: [
       { skill: "JavaScript", expertise: "expert" },
-      { skill: "React", expertise: "expert" },
-      { skill: "Node.js", expertise: "expert" },
-      { skill: "Express", expertise: "expert" },
-      { skill: "MongoDB", expertise: "expert" },
-      { skill: "GraphQL", expertise: "advanced" },
+      { skill: "React", expertise: "Expert" },
+      { skill: "Node.js", expertise: "Expert" },
+      { skill: "Express", expertise: "Expert" },
+      { skill: "MongoDB", expertise: "Expert" },
+      { skill: "GraphQL", expertise: "Advanced" },
+      { skill: "AI", expertise: "Advanced" },
+      { skill: "ML", expertise: "Advanced" },
     ],
     experience: [
       {
