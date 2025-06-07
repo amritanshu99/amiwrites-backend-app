@@ -16,7 +16,7 @@ const getPortfolio = (req, res) => {
     phone: "+91 9149194704",
     summary: "",
     skills: [
-      { skill: "JavaScript", expertise: "expert" },
+      { skill: "JavaScript", expertise: "Expert" },
       { skill: "React", expertise: "Expert" },
       { skill: "Node.js", expertise: "Expert" },
       { skill: "Express", expertise: "Expert" },
