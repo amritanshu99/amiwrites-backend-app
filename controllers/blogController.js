@@ -2,6 +2,10 @@ const Blog = require("../models/Blog");
 const cache = require("../utils/cache");
 const { sendNotificationToAll } = require("./pushController");
 // ✅ Create Blog (invalidates cache)
+const Blog = require('../models/Blog'); // adjust if needed
+const cache = require('../utils/cache'); // your caching util
+const { sendNotificationToAll } = require('./pushController'); // ✅ make sure this path is correct
+
 exports.createBlog = async (req, res) => {
   try {
     if (req.user.username !== "amritanshu99") {
@@ -14,14 +18,21 @@ exports.createBlog = async (req, res) => {
     // Invalidate cache
     cache.del("blogs");
 
+    console.log('🔔 Sending notification for new blog:', blog.title); // ✅ Useful log
+
     // Call the notification function here
-    await sendNotificationToAll();
+    await sendNotificationToAll(
+      '📝 New Blog Published!',
+      `Read "${blog.title}" on AmiVerse now!`
+    );
 
     res.status(201).json(blog);
   } catch (err) {
+    console.error('❌ Blog creation failed:', err); // ✅ Add server logs
     res.status(400).json({ error: err.message });
   }
 };
+
 
 // ✅ Get All Blogs (with caching)
 exports.getBlogs = async (req, res) => {
