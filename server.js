@@ -13,21 +13,24 @@ app.use(express.json());
 
 // Serve static files (e.g., images)
 app.use(express.static(path.join(__dirname, "public")));
+
+// Health check
 app.get("/ping", (req, res) => {
   res.status(200).send("pong");
 });
 
-// API Routes
-app.use("/api/auth", require("./routes/authRoutes"));
-app.use("/api/blogs", require("./routes/blogRoutes"));        // Blog routes (protected)
-app.use("/api/portfolio", require("./routes/portfolioRoutes")); // Portfolio routes
-app.use("/api", require("./routes/newsRoutes"));              // News routes
-app.use("/api", require("./routes/contactRoutes"));           // Contact form
+// --- API Routes ---
+app.use("/api/auth", require("./routes/authRoutes"));              // Auth
+app.use("/api/blogs", require("./routes/blogRoutes"));             // Blog routes (protected)
+app.use("/api/portfolio", require("./routes/portfolioRoutes"));    // Portfolio routes
+app.use("/api", require("./routes/newsRoutes"));                   // News API
+app.use("/api", require("./routes/contactRoutes"));                // Contact form
+app.use("/api/gemini", require("./routes/geminiRoutes"));          // Gemini AI
 
-// Gemini AI Routes
-app.use("/api/gemini", require("./routes/geminiRoutes"));
+// ✅ Push Notification Routes
+app.use("/api", require("./routes/pushRoutes"));                   // Handles /api/subscribe
 
-// MongoDB Connection
+// --- MongoDB Connection ---
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {

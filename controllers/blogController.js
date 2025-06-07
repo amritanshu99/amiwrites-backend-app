@@ -1,6 +1,6 @@
 const Blog = require("../models/Blog");
 const cache = require("../utils/cache");
-
+const { sendNotificationToAll } = require("./pushController");
 // ✅ Create Blog (invalidates cache)
 exports.createBlog = async (req, res) => {
   try {
@@ -13,6 +13,12 @@ exports.createBlog = async (req, res) => {
 
     // ❌ Invalidate cache
     cache.del("blogs");
+
+    // ✅ Send push notification to all subscribers
+    await sendNotificationToAll(
+      "🆕 New Blog Posted!",
+      `Check out "${blog.title}" now on AmiVerse!`
+    );
 
     res.status(201).json(blog);
   } catch (err) {
