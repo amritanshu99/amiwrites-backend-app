@@ -1,47 +1,46 @@
 const webpush = require('../utils/webPushConfig');
+const Subscription = require('../models/Subscription');
 
-const subscriptions = [];
-
-exports.subscribe = (req, res) => {
+exports.subscribe = async (req, res) => {
   const subscription = req.body;
 
   if (!subscription || !subscription.endpoint) {
-    console.warn('⚠️ Invalid subscription object received');
     return res.status(400).json({ error: 'Invalid subscription object' });
   }
 
-  const exists = subscriptions.find((sub) => sub.endpoint === subscription.endpoint);
+  try {
+    const existing = await Subscription.findOne({ endpoint: subscription.endpoint });
+    if (!existing) {
+      await Subscription.create(subscription);
+      console.log('📬 New subscription stored:', subscription.endpoint);
+    }
 
-  if (!exists) {
-    subscriptions.push(subscription);
-    console.log('✅ New subscription added:', subscription.endpoint);
-    console.log('📦 Total active subscriptions:', subscriptions.length);
-  } else {
-    console.log('ℹ️ Subscription already exists:', subscription.endpoint);
+    res.status(201).json({ message: 'Subscription stored.' });
+  } catch (err) {
+    console.error('❌ Failed to store subscription:', err);
+    res.status(500).json({ error: 'Subscription storage failed' });
   }
-
-  res.status(201).json({ message: 'Subscription stored.' });
 };
 
 exports.sendNotificationToAll = async (
-  title = '🆕 New Blog!',
+  title = 'New Blog!',
   body = 'Check out the latest post on AmiVerse!'
 ) => {
-  const payload = JSON.stringify({ title, body });
+  try {
+    const subscriptions = await Subscription.find();
+    console.log(`📣 Sending push notifications to ${subscriptions.length} subscribers...`);
 
-  console.log(`📣 Sending push notifications to ${subscriptions.length} subscribers...`);
+    const payload = JSON.stringify({ title, body });
 
-  const sendAll = subscriptions.map((sub, index) =>
-    webpush.sendNotification(sub, payload)
-      .then(() => {
-        console.log(`✅ Notification sent to subscriber #${index + 1}: ${sub.endpoint}`);
+    const sendAll = subscriptions.map((sub) =>
+      webpush.sendNotification(sub, payload).catch((err) => {
+        console.error('❌ Push error', err);
       })
-      .catch((err) => {
-        console.error(`❌ Error sending to subscriber #${index + 1}:`, err);
-      })
-  );
+    );
 
-  await Promise.all(sendAll);
-
-  console.log('✅ All notifications attempted.');
+    await Promise.all(sendAll);
+    console.log('✅ All notifications attempted.');
+  } catch (err) {
+    console.error('❌ Error sending notifications:', err);
+  }
 };
