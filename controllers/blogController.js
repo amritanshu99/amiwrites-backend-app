@@ -11,20 +11,28 @@ exports.createBlog = async (req, res) => {
       return res.status(403).json({ message: "Only admin can create blogs" });
     }
 
-    const blog = new Blog(req.body);
+    const blog = new Blog({
+      ...req.body,
+      date: new Date(), // ensure consistent sorting if needed
+    });
     await blog.save();
 
-    // Invalidate cache
-    cache.del("blogs");
+    // ✅ Invalidate all paginated blog cache
+    const keys = cache.keys();
+    keys.forEach((key) => {
+      if (key.startsWith("blogs-page-")) {
+        cache.del(key);
+      }
+    });
 
     console.log('🔔 Sending notification for new blog:', blog.title);
 
- await sendNotificationToAll({
-  title: '📝 New Blog Published!',
-  body: `Read "${blog.title}" on AmiVerse now!`,
-  icon: 'https://www.amiverse.in/images/favicon.ico',
-  url: `https://www.amiverse.in/blog/` // or use a slug if you have one
-});
+    await sendNotificationToAll({
+      title: '📝 New Blog Published!',
+      body: `Read "${blog.title}" on AmiVerse now!`,
+      icon: 'https://www.amiverse.in/images/favicon.ico',
+      url: `https://www.amiverse.in/blog/`, // or dynamic slug if applicable
+    });
 
     res.status(201).json(blog);
   } catch (err) {
@@ -32,6 +40,7 @@ exports.createBlog = async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 };
+
 
 
 
