@@ -47,9 +47,12 @@ exports.createBlog = async (req, res) => {
 // ✅ Get Blogs with Pagination and Caching
 exports.getBlogs = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;      // ?page=1
-    const limit = parseInt(req.query.limit) || 10;   // ?limit=10
-    const cacheKey = `blogs-page-${page}-limit-${limit}`;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search?.trim() || "";
+    const sort = req.query.sort === "oldest" ? 1 : -1;
+
+    const cacheKey = `blogs-page-${page}-limit-${limit}-search-${search}-sort-${sort}`;
 
     const cachedBlogs = cache.get(cacheKey);
     if (cachedBlogs) {
@@ -57,12 +60,16 @@ exports.getBlogs = async (req, res) => {
       return res.json(cachedBlogs);
     }
 
-    const blogs = await Blog.find()
-      .sort({ date: -1 })
+    const query = search
+      ? { title: { $regex: search, $options: "i" } }
+      : {};
+
+    const blogs = await Blog.find(query)
+      .sort({ date: sort })
       .skip((page - 1) * limit)
       .limit(limit);
 
-    const total = await Blog.countDocuments();
+    const total = await Blog.countDocuments(query);
     const hasMore = page * limit < total;
 
     const response = { blogs, hasMore };
@@ -76,6 +83,7 @@ exports.getBlogs = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // ✅ Get Blog by ID (no caching here)
