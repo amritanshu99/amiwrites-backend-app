@@ -94,14 +94,20 @@ exports.deleteBlog = async (req, res) => {
       return res.status(404).json({ error: "Blog not found" });
     }
 
-    // ❌ Invalidate cache
-    cache.del("blogs");
+    // ✅ Invalidate all blog list cache entries
+    const keys = cache.keys();
+    keys.forEach((key) => {
+      if (key.startsWith("blogs-page-")) {
+        cache.del(key);
+      }
+    });
 
     res.json({ message: "Blog deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // ✅ Delete All Blogs (invalidates cache)
 exports.deleteAllBlogs = async (req, res) => {
