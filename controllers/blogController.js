@@ -35,26 +35,39 @@ exports.createBlog = async (req, res) => {
 
 
 
-// ✅ Get All Blogs (with caching)
+// ✅ Get Blogs with Pagination and Caching
 exports.getBlogs = async (req, res) => {
   try {
-    const cachedBlogs = cache.get("blogs");
+    const page = parseInt(req.query.page) || 1;      // ?page=1
+    const limit = parseInt(req.query.limit) || 10;   // ?limit=10
+    const cacheKey = `blogs-page-${page}-limit-${limit}`;
+
+    const cachedBlogs = cache.get(cacheKey);
     if (cachedBlogs) {
-      console.log("🔁 Serving from cache Blogs");
+      console.log(`🔁 Serving from cache: ${cacheKey}`);
       return res.json(cachedBlogs);
     }
 
-    const blogs = await Blog.find().sort({ date: -1 });
+    const blogs = await Blog.find()
+      .sort({ date: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit);
 
-    // ✅ Store in cache
-    cache.set("blogs", blogs);
-    console.log("🗃️ Serving from DB and caching result Blogs");
+    const total = await Blog.countDocuments();
+    const hasMore = page * limit < total;
 
-    res.json(blogs);
+    const response = { blogs, hasMore };
+
+    cache.set(cacheKey, response, 300); // cache for 5 min
+    console.log(`🗃️ Serving from DB and caching: ${cacheKey}`);
+
+    res.json(response);
   } catch (err) {
+    console.error("❌ Error fetching blogs:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // ✅ Get Blog by ID (no caching here)
 exports.getBlogById = async (req, res) => {
