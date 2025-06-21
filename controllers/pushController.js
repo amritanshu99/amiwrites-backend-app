@@ -25,8 +25,8 @@ exports.subscribe = async (req, res) => {
 exports.sendNotificationToAll = async ({
   title = 'New Blog!',
   body = 'Check out the latest post on AmiVerse!',
-  icon = 'https://www.amiverse.in/images/favicon.ico',
-  url = 'https://www.amiverse.in/blog'
+  icon = 'https://amiwrites-backend-app-1.onrender.com/images/favicon.ico',
+  url = 'https://www.amiverse.in/blogs'
 } = {}) => {
   try {
     const subscriptions = await Subscription.find();
