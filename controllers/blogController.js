@@ -52,17 +52,17 @@ exports.getBlogs = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const sort = req.query.sort === "oldest" ? 1 : -1;
 
+    const query = search
+      ? { title: { $regex: new RegExp(search, "i") } }
+      : {};
+
     const cacheKey = `blogs-page-${page}-limit-${limit}-search-${search}-sort-${sort}`;
 
-    const cachedBlogs = cache.get(cacheKey);
-    if (cachedBlogs) {
-      console.log(`🔁 Serving from cache: ${cacheKey}`);
-      return res.json(cachedBlogs);
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      console.log(`🔁 From cache: ${cacheKey}`);
+      return res.json(cached);
     }
-
-    const query = search
-      ? { title: { $regex: search, $options: "i" } }
-      : {};
 
     const blogs = await Blog.find(query)
       .sort({ date: sort })
@@ -74,15 +74,15 @@ exports.getBlogs = async (req, res) => {
 
     const response = { blogs, hasMore };
 
-    cache.set(cacheKey, response, 300); // cache for 5 min
-    console.log(`🗃️ Serving from DB and caching: ${cacheKey}`);
-
+    cache.set(cacheKey, response, 300);
+    console.log(`🗃️ From DB and cached: ${cacheKey}`);
     res.json(response);
   } catch (err) {
     console.error("❌ Error fetching blogs:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
