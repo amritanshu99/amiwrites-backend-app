@@ -55,7 +55,7 @@ const getPortfolio = (req, res) => {
       {
         institution: "Rajkumar Goel Institute Of Technology GZB",
         degree: "B.Tech in Electronics and Communication Engg.",
-        year: "2015 - 2019",
+        duration: "2015 - 2019",
         achievements: [
           "Organized many college-level events",
           "Participated as a volunteer at IISF Lucknow 2018",
@@ -67,7 +67,7 @@ const getPortfolio = (req, res) => {
       {
         institution: "Ramanlal Shorawala Public School Mathura",
         degree: "10th and 12th",
-        year: "2001 - 2014",
+        duration: "2001 - 2014",
         achievements: [
           "Head Boy of school",
           "Interviewed by a national-level newspaper",
