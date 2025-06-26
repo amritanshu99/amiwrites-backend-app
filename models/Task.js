@@ -6,7 +6,6 @@ const taskSchema = new mongoose.Schema(
     description: { type: String, required: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     completed: { type: Boolean, default: false }, // ✅ for productivity tracking
-    isDeleted: { type: Boolean, default: false }, // ✅ for soft-delete/archive
   },
   { timestamps: true }
 );

@@ -1,16 +1,15 @@
+// ✅ Task Controller with Hard Delete Only (No Archive)
 const Task = require("../models/Task");
-
 const cache = require("../utils/cache");
 
-// GET /tasks (User-specific)
+// GET /tasks - List all tasks for the logged-in user
 exports.getAllTasks = async (req, res) => {
   const cacheKey = `tasks_${req.user.id}`;
-
   const cachedTasks = cache.get(cacheKey);
   if (cachedTasks) return res.json(cachedTasks);
 
   try {
-    const tasks = await Task.find({ userId: req.user.id, isDeleted: false }).sort({ createdAt: -1 });
+    const tasks = await Task.find({ userId: req.user.id }).sort({ createdAt: -1 });
     cache.set(cacheKey, tasks);
     res.json(tasks);
   } catch (err) {
@@ -18,17 +17,15 @@ exports.getAllTasks = async (req, res) => {
   }
 };
 
-// POST /tasks
+// POST /tasks - Create a new task
 exports.createTask = async (req, res) => {
   const { title, description } = req.body;
-
   try {
     const task = await Task.create({
       title,
       description,
       userId: req.user.id,
     });
-
     cache.del(`tasks_${req.user.id}`);
     res.status(201).json(task);
   } catch (err) {
@@ -36,11 +33,10 @@ exports.createTask = async (req, res) => {
   }
 };
 
-// PUT /tasks/:id
+// PUT /tasks/:id - Update task (title, description, completed)
 exports.updateTask = async (req, res) => {
   const { id } = req.params;
-  const { title, description, completed, isDeleted } = req.body;
-
+  const { title, description, completed } = req.body;
   try {
     const task = await Task.findOne({ _id: id, userId: req.user.id });
     if (!task) return res.status(404).json({ error: "Task not found" });
@@ -48,10 +44,8 @@ exports.updateTask = async (req, res) => {
     if (title !== undefined) task.title = title;
     if (description !== undefined) task.description = description;
     if (completed !== undefined) task.completed = completed;
-    if (isDeleted !== undefined) task.isDeleted = isDeleted;
 
     const updatedTask = await task.save();
-
     cache.del(`tasks_${req.user.id}`);
     res.json(updatedTask);
   } catch (err) {
@@ -59,13 +53,12 @@ exports.updateTask = async (req, res) => {
   }
 };
 
-// DELETE /tasks/:id (Hard delete - optional)
+// DELETE /tasks/:id - Permanently delete a task
 exports.deleteTask = async (req, res) => {
   const { id } = req.params;
-
   try {
-    const deletedTask = await Task.findOneAndDelete({ _id: id, userId: req.user.id });
-    if (!deletedTask) return res.status(404).json({ error: "Task not found" });
+    const deleted = await Task.findOneAndDelete({ _id: id, userId: req.user.id });
+    if (!deleted) return res.status(404).json({ error: "Task not found" });
 
     cache.del(`tasks_${req.user.id}`);
     res.json({ message: "Task permanently deleted" });
@@ -74,18 +67,15 @@ exports.deleteTask = async (req, res) => {
   }
 };
 
-// Optional: GET /tasks/stats
+// GET /tasks/stats - Return productivity stats
 exports.getTaskStats = async (req, res) => {
   try {
-    const allTasks = await Task.find({ userId: req.user.id, isDeleted: false });
-    const total = allTasks.length;
-    const completed = allTasks.filter(t => t.completed).length;
+    const tasks = await Task.find({ userId: req.user.id });
+    const total = tasks.length;
+    const completed = tasks.filter((t) => t.completed).length;
+    const completionRate = total > 0 ? (completed / total) * 100 : 0;
 
-    res.json({
-      total,
-      completed,
-      completionRate: total > 0 ? (completed / total) * 100 : 0,
-    });
+    res.json({ total, completed, completionRate });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
