@@ -1,3 +1,6 @@
+const Task = require("../models/Task");
+
+const cache = require("../utils/cache");
 
 // GET /tasks (User-specific)
 exports.getAllTasks = async (req, res) => {
