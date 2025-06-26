@@ -26,6 +26,7 @@ app.use("/api/portfolio", require("./routes/portfolioRoutes"));    // Portfolio 
 app.use("/api", require("./routes/newsRoutes"));                   // News API
 app.use("/api", require("./routes/contactRoutes"));                // Contact form
 app.use("/api/gemini", require("./routes/geminiRoutes"));          // Gemini AI
+app.use("/api/tasks", require("./routes/taskRoutes"));
 
 // ✅ Push Notification Routes
 app.use("/api", require("./routes/pushRoutes"));                   // Handles /api/subscribe
