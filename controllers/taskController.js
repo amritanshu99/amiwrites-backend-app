@@ -67,16 +67,4 @@ exports.deleteTask = async (req, res) => {
   }
 };
 
-// GET /tasks/stats - Return productivity stats
-exports.getTaskStats = async (req, res) => {
-  try {
-    const tasks = await Task.find({ userId: req.user.id });
-    const total = tasks.length;
-    const completed = tasks.filter((t) => t.completed).length;
-    const completionRate = total > 0 ? (completed / total) * 100 : 0;
 
-    res.json({ total, completed, completionRate });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
