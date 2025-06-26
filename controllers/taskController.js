@@ -1,14 +1,28 @@
 const Task = require("../models/Task");
 
+const cache = require("../utils/cache");
+
+
 // GET /tasks (User-specific)
 exports.getAllTasks = async (req, res) => {
+  const cacheKey = `tasks_${req.user.id}`;
+  
+  // Check if cache exists
+  const cachedTasks = cache.get(cacheKey);
+  if (cachedTasks) {
+    return res.json(cachedTasks); // Serve from cache
+  }
+
   try {
     const tasks = await Task.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    cache.set(cacheKey, tasks); // Save to cache
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+
 
 // POST /tasks
 exports.createTask = async (req, res) => {
@@ -18,8 +32,11 @@ exports.createTask = async (req, res) => {
     const task = await Task.create({
       title,
       description,
-      userId: req.user.id, // from JWT
+      userId: req.user.id,
     });
+
+    cache.del(`tasks_${req.user.id}`); // Invalidate cache
+
     res.status(201).json(task);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -39,6 +56,8 @@ exports.updateTask = async (req, res) => {
     task.description = description;
     const updatedTask = await task.save();
 
+    cache.del(`tasks_${req.user.id}`); // Invalidate cache
+
     res.json(updatedTask);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -53,8 +72,12 @@ exports.deleteTask = async (req, res) => {
     const deletedTask = await Task.findOneAndDelete({ _id: id, userId: req.user.id });
     if (!deletedTask) return res.status(404).json({ error: "Task not found" });
 
+    cache.del(`tasks_${req.user.id}`); // Invalidate cache
+
     res.json({ message: "Task deleted" });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 };
+
+
