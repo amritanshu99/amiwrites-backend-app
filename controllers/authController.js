@@ -216,6 +216,7 @@ exports.validateResetToken = async (req, res) => {
 };
 
 exports.verifyToken = (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   const authHeader = req.header("Authorization");
   if (!authHeader) {
     return res.status(401).json({ valid: false, message: "Missing token" });
