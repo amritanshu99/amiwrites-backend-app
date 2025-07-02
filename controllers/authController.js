@@ -214,3 +214,18 @@ exports.validateResetToken = async (req, res) => {
     res.status(500).json({ valid: false, error: "Server error" });
   }
 };
+
+exports.verifyToken = (req, res) => {
+  const authHeader = req.header("Authorization");
+  if (!authHeader) {
+    return res.status(401).json({ valid: false, message: "Missing token" });
+  }
+
+  const token = authHeader.replace("Bearer ", "");
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return res.status(200).json({ valid: true, user: decoded });
+  } catch (err) {
+    return res.status(401).json({ valid: false, message: "Invalid or expired token" });
+  }
+};

@@ -7,4 +7,6 @@ router.post("/login", authController.login);
 router.post("/request-reset", authController.requestPasswordReset);
 router.post("/reset", authController.resetPassword);
 router.get("/validate-reset-token/:token", authController.validateResetToken);
+router.post("/verify-token", authController.verifyToken);
+
 module.exports = router;
