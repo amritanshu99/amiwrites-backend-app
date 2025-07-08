@@ -31,6 +31,9 @@ app.use("/api/tasks", require("./routes/taskRoutes"));
 app.use("/api", require("./routes/pushRoutes"));                   // Handles /api/subscribe
 //spam routhes
 app.use("/api", require("./routes/spamRoutes")); 
+//movie-reccomender 
+app.use("/api/recommender", require("./routes/recommenderRoutes"));
+
 // --- MongoDB Connection ---
 mongoose
   .connect(process.env.MONGO_URI)
