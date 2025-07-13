@@ -33,6 +33,8 @@ app.use("/api", require("./routes/pushRoutes"));                   // Handles /a
 app.use("/api", require("./routes/spamRoutes")); 
 //movie-reccomender 
 app.use("/api/recommender", require("./routes/recommenderRoutes"));
+// ✅ Base route for emotion analysis
+app.use("/api/emotion", require("./routes/emotionRoutes")); 
 
 // --- MongoDB Connection ---
 mongoose
