@@ -35,6 +35,8 @@ app.use("/api", require("./routes/spamRoutes"));
 app.use("/api/recommender", require("./routes/recommenderRoutes"));
 // ✅ Base route for emotion analysis
 app.use("/api/emotion", require("./routes/emotionRoutes")); 
+// ✅ AmiBot Proxy Route
+app.use("/api/amibot", require("./routes/amibotRoutes"));
 
 // --- MongoDB Connection ---
 mongoose
