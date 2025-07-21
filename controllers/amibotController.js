@@ -1,24 +1,60 @@
-const fetch = (...args) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const https = require("https");
 
-exports.askAmibot = async (req, res) => {
-  try {
-    const userQuery = req.body.query;
+function askAmibot(req, res) {
+  const { query } = req.body;
 
-    const response = await fetch('https://amibot-10u4.onrender.com/amibot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: userQuery }),
+  if (!query) {
+    return res.status(400).json({ error: "Query is required" });
+  }
+
+  const postData = JSON.stringify({ query });
+
+  const options = {
+    hostname: "amibot-c6oa.onrender.com",
+    path: "/ask",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(postData),
+    },
+  };
+
+  const request = https.request(options, (response) => {
+    let data = "";
+
+    response.on("data", (chunk) => {
+      data += chunk;
     });
 
-    if (!response.ok) {
-      throw new Error(`AmiBot API error: ${response.status}`);
-    }
+    response.on("end", () => {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          const parsed = JSON.parse(data);
+          res.status(200).json({ botResponse: parsed });
+        } catch (err) {
+          console.error("❌ Error parsing AmiBot response:", err.message);
+          res.status(500).json({ error: "Failed to parse AmiBot response" });
+        }
+      } else {
+        try {
+          const errorData = JSON.parse(data);
+          res.status(response.statusCode).json({ error: errorData });
+        } catch {
+          res
+            .status(response.statusCode)
+            .json({ error: "Unknown error from AmiBot API" });
+        }
+      }
+    });
+  });
 
-    const data = await response.json();
-    res.status(200).json({ botResponse: data });
-  } catch (err) {
-    console.error('❌ Error calling AmiBot:', err.message);
-    res.status(500).json({ error: 'AmiBot API call failed' });
-  }
-};
+  request.on("error", (err) => {
+    console.error("❌ AmiBot API request error:", err.message);
+    res.status(500).json({ error: "Failed to reach AmiBot API" });
+  });
+
+  request.write(postData);
+  request.end();
+}
+
+module.exports = { askAmibot };
