@@ -5,7 +5,7 @@ const analyzeEmotion = async (req, res) => {
   const inputText = req.params.text;
 
   try {
-    const response = await fetch("https://emotion-detector-99e2.onrender.com/predict", {
+    const response = await fetch("https://emotion-detector-rr3l.onrender.com/predict", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: inputText }),
