@@ -5,7 +5,7 @@ const getMovieRecommendations = async (req, res) => {
   const { movie, top_n } = req.body;
 
   try {
-    const response = await fetch("https://movie-recommender-fr2b.onrender.com/recommend", {
+    const response = await fetch("https://movie-recommender-mtr3.onrender.com/recommend", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ movie, top_n }),
