@@ -1,18 +1,33 @@
 const cache = require("../utils/cache");
 const { sendNotificationToAll } = require("./pushController");
+const Blog = require('../models/Blog');
+
+// 🔽 NEW: import RL stats model (non-breaking)
+const BlogStat = require("../models/BlogStat");
+
+// 🔽 NEW: helper to compute word count (robust to HTML/plain text)
+function countWords(s = "") {
+  return String(s)
+    .replace(/<[^>]*>/g, " ")     // strip HTML
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean).length;
+}
+
 // ✅ Create Blog (invalidates cache)
-const Blog = require('../models/Blog'); // ✅ Only once
-
-
-
 exports.createBlog = async (req, res) => {
   try {
     if (req.user.username !== "amritanshu99") {
       return res.status(403).json({ message: "Only admin can create blogs" });
     }
 
+    // 🔽 NEW: compute words once so RL has accurate expected read time
+    const words = countWords(req.body.content || req.body.html || req.body.text || "");
+
     const blog = new Blog({
       ...req.body,
+      words,           // 🔽 NEW: persisted word count (harmless even if Blog schema ignores it)
       date: new Date(), // ensure consistent sorting if needed
     });
     await blog.save();
@@ -40,8 +55,6 @@ exports.createBlog = async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 };
-
-
 
 
 // ✅ Get Blogs with Pagination and Caching
@@ -84,8 +97,6 @@ exports.getBlogs = async (req, res) => {
 };
 
 
-
-
 // ✅ Get Blog by ID (no caching here)
 exports.getBlogById = async (req, res) => {
   try {
@@ -119,6 +130,9 @@ exports.deleteBlog = async (req, res) => {
       }
     });
 
+    // 🔽 NEW: clean up RL stats for this post (safe no-op if none)
+    await BlogStat.deleteOne({ postId: blog._id });
+
     res.json({ message: "Blog deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -137,6 +151,9 @@ exports.deleteAllBlogs = async (req, res) => {
 
     // ❌ Invalidate cache
     cache.del("blogs");
+
+    // 🔽 NEW: clear all RL stats rows to avoid orphans
+    await BlogStat.deleteMany({});
 
     res.json({ message: "All blogs deleted successfully" });
   } catch (err) {

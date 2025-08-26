@@ -38,11 +38,20 @@ app.use("/api/emotion", require("./routes/emotionRoutes"));
 // ✅ AmiBot Proxy Route
 app.use("/api/amibot", require("./routes/amibotRoutes"));
 
+// 🔥 RL Trending (Bandit) — NEW (non-conflicting)
+app.use("/api/trending-rl", require("./routes/trendingRLRoutes"));
+
+
 // --- MongoDB Connection ---
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log("✅ Connected to MongoDB");
+
+    // 🔁 Start daily decay cron for RL stats — NEW
+    const { startDecayJob } = require("./utils/decay");
+    startDecayJob();
+
     app.listen(process.env.PORT || 5000, () =>
       console.log(`🚀 Server running at http://localhost:${process.env.PORT || 5000}`)
     );
