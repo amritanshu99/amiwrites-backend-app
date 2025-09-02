@@ -61,7 +61,7 @@ exports.createBlog = async (req, res) => {
 exports.getBlogs = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 2;
     const search = req.query.search?.trim() || "";
     const sort = req.query.sort === "oldest" ? 1 : -1;
 
