@@ -131,7 +131,7 @@ exports.deleteBlog = async (req, res) => {
     });
 
     // 🔽 NEW: clean up RL stats for this post (safe no-op if none)
-    await BlogStat.deleteOne({ postId: blog._id });
+    await BlogStat.deleteOne({ postId: mongoose.Types.ObjectId(blog._id) });
 
     res.json({ message: "Blog deleted successfully" });
   } catch (err) {
