@@ -6,7 +6,7 @@ const { betaSample } = require("../utils/beta");
 
 const PRIORS = { alpha: 1.5, beta: 1.0 };
 const FRESH_HOURS = 72;
-const FRESH_MULTIPLIER = 1.10;
+const FRESH_MULTIPLIER = 1.1;
 
 // ---------- helpers ----------
 function wordsFromBlog(blog) {
@@ -19,8 +19,8 @@ function computeExpectedMs(words = 0) {
   return (Math.max(50, words) / 200) * 60 * 1000;
 }
 function isBotLike(dwell_ms, scroll_depth) {
-  return (dwell_ms != null && Number(dwell_ms) < 5000) &&
-         (scroll_depth != null && Number(scroll_depth) < 0.15);
+  return dwell_ms != null && Number(dwell_ms) < 5000 &&
+         scroll_depth != null && Number(scroll_depth) < 0.15;
 }
 function safeDate(doc) {
   return doc?.publishedAt || doc?.date || doc?.createdAt || null;
@@ -42,22 +42,18 @@ function extractObjectIdHex(str = "") {
 async function resolveBlogByRef(ref) {
   const hex = extractObjectIdHex(ref);
   if (hex && mongoose.Types.ObjectId.isValid(hex)) {
-    try {
-      const oid = mongoose.Types.ObjectId(hex);
-      const byId = await Blog.findById(oid).lean();
-      if (byId) return { blog: byId, postId: oid };
-    } catch (e) {
-      // fallthrough to slug resolve if byId fails
-    }
+    const oid = new mongoose.Types.ObjectId(hex);
+    const byId = await Blog.findById(oid).lean();
+    if (byId) return { blog: byId, postId: oid };
   }
   if (typeof ref === "string") {
     const bySlug = await Blog.findOne({ slug: ref }).lean();
-    if (bySlug) return { blog: bySlug, postId: mongoose.Types.ObjectId(bySlug._id) };
+    if (bySlug) return { blog: bySlug, postId: new mongoose.Types.ObjectId(bySlug._id) };
   }
   return { blog: null, postId: null };
 }
 
-// ---------- GET /api/trending-rl/trending?limit=4&windowDays=60&all=0 ----------
+// ---------- GET /api/trending-rl/trending ----------
 exports.getTrending = async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit || "4", 10), 1), 10);
@@ -80,17 +76,10 @@ exports.getTrending = async (req, res) => {
 
     if (!posts.length) return res.json({ items: [] });
 
-    const ids = posts.map((p) => p._id);
-    const stringIds = ids.map((i) => String(i));
+    const ids = posts.map((p) => new mongoose.Types.ObjectId(p._id));
 
-    // Fetch stat rows robust to mixed types
-    const statRows = await BlogStat.find({
-      $or: [
-        { postId: { $in: ids } },
-        { postId: { $in: stringIds } }
-      ]
-    }).lean();
-
+    // Always store postId as ObjectId in BlogStat
+    const statRows = await BlogStat.find({ postId: { $in: ids } }).lean();
     const stats = new Map(statRows.map((s) => [String(s.postId), s]));
 
     const scored = posts.map((p) => {
@@ -128,7 +117,7 @@ exports.getTrending = async (req, res) => {
       if (!chosen.find((p) => String(p._id) === String(item.post._id))) chosen.push(item.post);
     }
 
-    // Ensure at least one fresh item if possible
+    // Ensure at least one fresh
     const hasFresh = chosen.some((p) => {
       const d = safeDate(p);
       return d && (now - new Date(d)) / 3600000 <= FRESH_HOURS;
@@ -159,28 +148,26 @@ exports.trackImpression = async (req, res) => {
     const { blog, postId } = await resolveBlogByRef(ref);
     if (!blog) return bad(res, 404, "Blog not found for given postId/slug");
 
-    const oid = mongoose.Types.ObjectId(postId);
-
     await BlogStat.updateOne(
-      { postId: oid },
+      { postId },
       {
         $setOnInsert: {
-          postId: oid,
+          postId,
           alpha: PRIORS.alpha,
           beta: PRIORS.beta,
-          words: blog.words || wordsFromBlog(blog),
-          category: blog.category || null,
-          publishedAt: safeDate(blog) || new Date(),
           impressions: 0,
           clicks: 0,
           engaged_count: 0,
-          lastUpdated: new Date(),
+          words: blog.words || wordsFromBlog(blog),
+          category: blog.category || null,
+          publishedAt: safeDate(blog) || new Date(),
         },
         $inc: { impressions: 1 },
         $set: { lastUpdated: new Date() },
       },
       { upsert: true }
     );
+
     return ok(res);
   } catch (e) {
     console.error("Impression failed:", e?.message, e?.stack);
@@ -197,28 +184,26 @@ exports.trackClick = async (req, res) => {
     const { blog, postId } = await resolveBlogByRef(ref);
     if (!blog) return bad(res, 404, "Blog not found for given postId/slug");
 
-    const oid = mongoose.Types.ObjectId(postId);
-
     await BlogStat.updateOne(
-      { postId: oid },
+      { postId },
       {
         $setOnInsert: {
-          postId: oid,
+          postId,
           alpha: PRIORS.alpha,
           beta: PRIORS.beta,
-          words: blog.words || wordsFromBlog(blog),
-          category: blog.category || null,
-          publishedAt: safeDate(blog) || new Date(),
           impressions: 0,
           clicks: 0,
           engaged_count: 0,
-          lastUpdated: new Date(),
+          words: blog.words || wordsFromBlog(blog),
+          category: blog.category || null,
+          publishedAt: safeDate(blog) || new Date(),
         },
         $inc: { clicks: 1 },
         $set: { lastUpdated: new Date() },
       },
       { upsert: true }
     );
+
     return ok(res);
   } catch (e) {
     console.error("Click failed:", e?.message, e?.stack);
@@ -226,7 +211,7 @@ exports.trackClick = async (req, res) => {
   }
 };
 
-// POST /api/trending-rl/events/read-end
+// ---------- POST /api/trending-rl/events/read-end ----------
 exports.trackReadEnd = async (req, res) => {
   try {
     const { postId: ref, dwell_ms, scroll_depth, bookmarked, shared } = req.body || {};
@@ -250,9 +235,6 @@ exports.trackReadEnd = async (req, res) => {
       !!bookmarked ||
       !!shared;
 
-    // Atomic upsert: create-with-priors if missing, and increment outcome in one op
-    const oid = mongoose.Types.ObjectId(postId);
-
     const incForUpsert = {};
     if (engaged) {
       incForUpsert.alpha = 1;
@@ -262,10 +244,10 @@ exports.trackReadEnd = async (req, res) => {
     }
 
     await BlogStat.updateOne(
-      { postId: oid },
+      { postId },
       {
         $setOnInsert: {
-          postId: oid,
+          postId,
           alpha: PRIORS.alpha,
           beta: PRIORS.beta,
           impressions: 0,
@@ -274,7 +256,6 @@ exports.trackReadEnd = async (req, res) => {
           words,
           category: blog.category || null,
           publishedAt: safeDate(blog) || new Date(),
-          lastUpdated: new Date(),
         },
         $inc: incForUpsert,
         $set: { lastUpdated: new Date() },
