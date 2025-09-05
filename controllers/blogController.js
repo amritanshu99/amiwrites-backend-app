@@ -1,6 +1,8 @@
+// controllers/blogController.js  (replace the existing file contents)
+const mongoose = require("mongoose");
 const cache = require("../utils/cache");
 const { sendNotificationToAll } = require("./pushController");
-const Blog = require('../models/Blog');
+const Blog = require("../models/Blog");
 
 // 🔽 NEW: import RL stats model (non-breaking)
 const BlogStat = require("../models/BlogStat");
@@ -31,6 +33,31 @@ exports.createBlog = async (req, res) => {
       date: new Date(), // ensure consistent sorting if needed
     });
     await blog.save();
+
+    // 🔽 NEW: ensure a BlogStat row exists for this post (creates with priors if missing)
+    try {
+      await BlogStat.updateOne(
+        { postId: mongoose.Types.ObjectId(blog._id) },
+        {
+          $setOnInsert: {
+            postId: mongoose.Types.ObjectId(blog._id),
+            alpha: 1.5,
+            beta: 1.0,
+            impressions: 0,
+            clicks: 0,
+            engaged_count: 0,
+            words,
+            category: blog.category || null,
+            publishedAt: blog.date || new Date(),
+            lastUpdated: new Date(),
+          },
+        },
+        { upsert: true }
+      );
+    } catch (statErr) {
+      // non-fatal: log and continue — we don't want blog creation to fail if stats row fails
+      console.warn("Warning: creating BlogStat row failed (non-fatal):", statErr);
+    }
 
     // ✅ Invalidate all paginated blog cache
     const keys = cache.keys();
@@ -131,7 +158,11 @@ exports.deleteBlog = async (req, res) => {
     });
 
     // 🔽 NEW: clean up RL stats for this post (safe no-op if none)
-    await BlogStat.deleteOne({ postId: mongoose.Types.ObjectId(blog._id) });
+    try {
+      await BlogStat.deleteOne({ postId: mongoose.Types.ObjectId(blog._id) });
+    } catch (delErr) {
+      console.warn("Warning: BlogStat deleteOne failed (non-fatal):", delErr);
+    }
 
     res.json({ message: "Blog deleted successfully" });
   } catch (err) {
