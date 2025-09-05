@@ -1,4 +1,3 @@
-// controllers/blogController.js
 const mongoose = require("mongoose");
 const cache = require("../utils/cache");
 const { sendNotificationToAll } = require("./pushController");

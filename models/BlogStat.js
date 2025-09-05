@@ -1,4 +1,3 @@
-// models/BlogStat.js
 const mongoose = require("mongoose");
 
 const BlogStatSchema = new mongoose.Schema(
