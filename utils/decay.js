@@ -1,9 +1,10 @@
+// utils/decay.js
 const cron = require("node-cron");
 const BlogStat = require("../models/BlogStat");
 const DECAY = 0.97; // tune between 0.95–0.99
 
 function startDecayJob() {
-  // 03:15 every day (uses TZ from env if set by node-cron if you pass it — left default intentionally)
+  // 03:15 every day (uses TZ from env if set)
   cron.schedule("15 3 * * *", async () => {
     try {
       await BlogStat.updateMany(

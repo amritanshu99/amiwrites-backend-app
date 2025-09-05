@@ -1,3 +1,4 @@
+// controllers/trendingRLController.js
 const mongoose = require("mongoose");
 const Blog = require("../models/Blog");
 const BlogStat = require("../models/BlogStat");
@@ -5,29 +6,30 @@ const { betaSample } = require("../utils/beta");
 
 const PRIORS = { alpha: 1.5, beta: 1.0 };
 const FRESH_HOURS = 72;
-const FRESH_MULTIPLIER = 1.1;
+const FRESH_MULTIPLIER = 1.10;
 
 // ---------- helpers ----------
 function wordsFromBlog(blog) {
   const raw = blog?.content || blog?.html || blog?.text || "";
   const stripped = String(raw).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-  const count = stripped ? stripped.split(" ").filter(Boolean).length : 0;
+  const count = stripped ? stripped.split(" ").length : 0;
   return Math.max(50, count); // floor to avoid zero
 }
 function computeExpectedMs(words = 0) {
   return (Math.max(50, words) / 200) * 60 * 1000;
 }
 function isBotLike(dwell_ms, scroll_depth) {
-  return dwell_ms != null && Number(dwell_ms) < 5000 &&
-         scroll_depth != null && Number(scroll_depth) < 0.15;
+  return (dwell_ms != null && Number(dwell_ms) < 5000) &&
+         (scroll_depth != null && Number(scroll_depth) < 0.15);
 }
 function safeDate(doc) {
+  // prefer explicit publishedAt/date, then createdAt
   return doc?.publishedAt || doc?.date || doc?.createdAt || null;
 }
 function bad(res, status, msg) { return res.status(status).json({ error: msg }); }
 function ok(res, payload = { ok: true }) { return res.status(200).json(payload); }
 
-// Extract 24-hex if present
+// Extract a valid 24-hex ObjectId if present (handles ObjectId("..."), concatenations)
 function extractObjectIdHex(str = "") {
   if (typeof str !== "string") return null;
   const wrapped = str.match(/ObjectId\(["']([0-9a-fA-F]{24})["']\)/);
@@ -37,68 +39,34 @@ function extractObjectIdHex(str = "") {
   return first24 ? first24[0] : null;
 }
 
-// Resolve flexible ref -> returns { blog, postId } where postId is an ObjectId
+// Resolve a blog by flexible ref: ObjectId (strict/loose) or slug
 async function resolveBlogByRef(ref) {
-  try {
-    // If already an ObjectId
-    if (ref && (ref instanceof mongoose.Types.ObjectId)) {
-      const byId = await Blog.findById(ref).lean();
-      if (byId) return { blog: byId, postId: new mongoose.Types.ObjectId(byId._id) };
-    }
-
-    // If it's an object like { $oid: "..." } or { _id: "..." }
-    if (ref && typeof ref === "object") {
-      const maybe = ref.$oid || ref.oid || ref._id || (ref.id ? ref.id : null);
-      if (maybe) {
-        const hex = extractObjectIdHex(String(maybe));
-        if (hex && mongoose.Types.ObjectId.isValid(hex)) {
-          const oid = new mongoose.Types.ObjectId(hex);
-          const byId = await Blog.findById(oid).lean();
-          if (byId) return { blog: byId, postId: oid };
-        }
-      }
-    }
-
-    // If it's a string that contains an ObjectId or exact hex
-    if (typeof ref === "string") {
-      const hex = extractObjectIdHex(ref);
-      if (hex && mongoose.Types.ObjectId.isValid(hex)) {
-        const oid = new mongoose.Types.ObjectId(hex);
-        const byId = await Blog.findById(oid).lean();
-        if (byId) return { blog: byId, postId: oid };
-      }
-
-      // Otherwise treat as slug
-      const bySlug = await Blog.findOne({ slug: ref }).lean();
-      if (bySlug) return { blog: bySlug, postId: new mongoose.Types.ObjectId(bySlug._id) };
-    }
-
-    // Nothing resolved
-    return { blog: null, postId: null };
-  } catch (err) {
-    console.error("resolveBlogByRef error:", err?.message || err);
-    return { blog: null, postId: null };
+  const hex = extractObjectIdHex(ref);
+  if (hex && mongoose.Types.ObjectId.isValid(hex)) {
+    const byId = await Blog.findById(hex).lean();
+    if (byId) return { blog: byId, postId: hex };
   }
+  if (typeof ref === "string") {
+    const bySlug = await Blog.findOne({ slug: ref }).lean();
+    if (bySlug) return { blog: bySlug, postId: String(bySlug._id) };
+  }
+  return { blog: null, postId: null };
 }
 
-// ---------- GET /api/trending-rl/trending ----------
-// Default behavior: consider ALL blogs (makes every blog eligible).
-// If you want to limit to recent posts only, call with `all=0&windowDays=<n>`
+// ---------- GET /api/trending-rl/trending?limit=4&windowDays=60&all=0 ----------
 exports.getTrending = async (req, res) => {
   try {
-    const limit = Math.min(Math.max(parseInt(req.query.limit || "4", 10), 1), 50);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || "4", 10), 1), 10);
     const windowDays = parseInt(req.query.windowDays || "60", 10);
-    // default to true (all blogs eligible). To restrict, caller must pass all=0.
-    const all = req.query.all === undefined ? true : req.query.all !== "0";
+    const all = req.query.all === "1"; // debug bypass: include all posts regardless of time
     const now = new Date();
 
     let posts = [];
     if (all) {
-      // fetch all blogs
       posts = await Blog.find({}).lean();
     } else {
-      // restricted window (caller opted into restriction)
       const startDate = new Date(now.getTime() - windowDays * 24 * 3600 * 1000);
+      // Accept posts with `date` in range OR (no date but createdAt in range)
       posts = await Blog.find({
         $or: [
           { date: { $gte: startDate, $lte: now } },
@@ -109,46 +77,37 @@ exports.getTrending = async (req, res) => {
 
     if (!posts.length) return res.json({ items: [] });
 
-    const ids = posts.map((p) => {
-      try { return new mongoose.Types.ObjectId(p._id); } catch { return p._id; }
-    });
-
-    // Pull existing stats for candidate posts
+    const ids = posts.map((p) => p._id);
     const statRows = await BlogStat.find({ postId: { $in: ids } }).lean();
     const stats = new Map(statRows.map((s) => [String(s.postId), s]));
 
     const scored = posts.map((p) => {
-      const key = String(p._id);
-      const s = stats.get(key) || {
-        alpha: PRIORS.alpha,
-        beta: PRIORS.beta,
-        words: p.words || wordsFromBlog(p),
-        category: p.category,
-        publishedAt: safeDate(p),
-      };
+      const s =
+        stats.get(String(p._id)) || {
+          alpha: PRIORS.alpha,
+          beta: PRIORS.beta,
+          words: p.words || wordsFromBlog(p),
+          category: p.category,
+          publishedAt: safeDate(p),
+        };
 
-      const a = Number(s.alpha) || PRIORS.alpha;
-      const b = Number(s.beta) || PRIORS.beta;
-
-      // sample a theta using Thompson Sampling (Beta)
-      const theta = betaSample(a, b);
+      const theta = betaSample(Number(s.alpha) || PRIORS.alpha, Number(s.beta) || PRIORS.beta);
 
       const pub = safeDate(p);
       const hoursOld = pub ? (now - new Date(pub)) / 3600000 : Number.POSITIVE_INFINITY;
       const freshBoost = hoursOld <= FRESH_HOURS ? FRESH_MULTIPLIER : 1.0;
-      const jitter = 1 + Math.random() * 0.02;
+      const jitter = 1 + Math.random() * 0.02; // tiny tie-break
 
-      return { post: p, score: theta * freshBoost * jitter, hoursOld, category: p.category || null };
+      return { post: p, score: theta * freshBoost * jitter };
     });
 
-    // sort by score desc
     scored.sort((a, b) => b.score - a.score);
 
-    // choose with category diversity first, then fill up to limit
+    // Diversity (by category) then fill
     const chosen = [];
     const seenCats = new Set();
     for (const item of scored) {
-      const cat = String(item.category || "");
+      const cat = String(item.post.category || "");
       if (seenCats.has(cat)) continue;
       chosen.push(item.post);
       seenCats.add(cat);
@@ -159,7 +118,7 @@ exports.getTrending = async (req, res) => {
       if (!chosen.find((p) => String(p._id) === String(item.post._id))) chosen.push(item.post);
     }
 
-    // Ensure at least one fresh item if available
+    // Ensure one fresh if possible
     const hasFresh = chosen.some((p) => {
       const d = safeDate(p);
       return d && (now - new Date(d)) / 3600000 <= FRESH_HOURS;
@@ -194,12 +153,8 @@ exports.trackImpression = async (req, res) => {
       { postId },
       {
         $setOnInsert: {
-          postId,
           alpha: PRIORS.alpha,
           beta: PRIORS.beta,
-          impressions: 0,
-          clicks: 0,
-          engaged_count: 0,
           words: blog.words || wordsFromBlog(blog),
           category: blog.category || null,
           publishedAt: safeDate(blog) || new Date(),
@@ -209,7 +164,6 @@ exports.trackImpression = async (req, res) => {
       },
       { upsert: true }
     );
-
     return ok(res);
   } catch (e) {
     console.error("Impression failed:", e?.message, e?.stack);
@@ -226,27 +180,21 @@ exports.trackClick = async (req, res) => {
     const { blog, postId } = await resolveBlogByRef(ref);
     if (!blog) return bad(res, 404, "Blog not found for given postId/slug");
 
-    // Treat click as a positive signal for RL: increment clicks + alpha (successes) + engaged_count
     await BlogStat.updateOne(
       { postId },
       {
         $setOnInsert: {
-          postId,
           alpha: PRIORS.alpha,
           beta: PRIORS.beta,
-          impressions: 0,
-          clicks: 0,
-          engaged_count: 0,
           words: blog.words || wordsFromBlog(blog),
           category: blog.category || null,
           publishedAt: safeDate(blog) || new Date(),
         },
-        $inc: { clicks: 1, alpha: 1, engaged_count: 1 },
+        $inc: { clicks: 1 },
         $set: { lastUpdated: new Date() },
       },
       { upsert: true }
     );
-
     return ok(res);
   } catch (e) {
     console.error("Click failed:", e?.message, e?.stack);
@@ -254,12 +202,13 @@ exports.trackClick = async (req, res) => {
   }
 };
 
-// ---------- POST /api/trending-rl/events/read-end ----------
+// POST /api/trending-rl/events/read-end
 exports.trackReadEnd = async (req, res) => {
   try {
     const { postId: ref, dwell_ms, scroll_depth, bookmarked, shared } = req.body || {};
     if (!ref) return res.status(400).json({ error: "postId required" });
 
+    // resolve id or slug
     const { blog, postId } = await resolveBlogByRef(ref);
     if (!blog) return res.status(404).json({ error: "Blog not found for given postId/slug" });
 
@@ -278,34 +227,36 @@ exports.trackReadEnd = async (req, res) => {
       !!bookmarked ||
       !!shared;
 
-    const incForUpsert = {};
-    if (engaged) {
-      incForUpsert.alpha = 1;
-      incForUpsert.engaged_count = 1;
-    } else {
-      incForUpsert.beta = 1;
-    }
+    // 1) Try update existing (NO upsert) to avoid alpha/beta conflict
+    const inc = { engaged_count: engaged ? 1 : 0 };
+    if (engaged) inc.alpha = 1; else inc.beta = 1;
 
-    await BlogStat.updateOne(
+    const updateRes = await BlogStat.updateOne(
       { postId },
-      {
-        $setOnInsert: {
-          postId,
-          alpha: PRIORS.alpha,
-          beta: PRIORS.beta,
-          impressions: 0,
-          clicks: 0,
-          engaged_count: 0,
-          words,
-          category: blog.category || null,
-          publishedAt: safeDate(blog) || new Date(),
-        },
-        $inc: incForUpsert,
-        $set: { lastUpdated: new Date() },
-      },
-      { upsert: true }
+      { $inc: inc, $set: { lastUpdated: new Date() } }, // no $setOnInsert here
+      { upsert: false }
     );
 
+    if (updateRes.matchedCount === 1) {
+      // updated an existing row
+      return res.status(200).json({ ok: true, engaged, ratio });
+    }
+
+    // 2) Row didn't exist — create it with priors + this outcome applied
+    const base = {
+      postId,
+      alpha: PRIORS.alpha + (engaged ? 1 : 0),
+      beta:  PRIORS.beta  + (engaged ? 0 : 1),
+      impressions: 0,
+      clicks: 0,
+      engaged_count: engaged ? 1 : 0,
+      words,
+      category: blog.category || null,
+      publishedAt: safeDate(blog) || new Date(),
+      lastUpdated: new Date(),
+    };
+
+    await BlogStat.create(base);
     return res.status(200).json({ ok: true, engaged, ratio });
   } catch (e) {
     console.error("ReadEnd failed:", e?.message, e?.stack);

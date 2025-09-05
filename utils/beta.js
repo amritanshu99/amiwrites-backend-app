@@ -1,3 +1,4 @@
+// utils/beta.js
 function gaussian() { // Box–Muller
   let u = 0, v = 0;
   while (!u) u = Math.random();
@@ -8,7 +9,6 @@ function gaussian() { // Box–Muller
 function gammaSample(shape) { // Marsaglia–Tsang
   if (shape < 1) {
     const u = Math.random();
-    // Use property Gamma(shape) = Gamma(shape+1) * u^(1/shape)
     return gammaSample(1 + shape) * Math.pow(u, 1 / shape);
   }
   const d = shape - 1/3, c = 1 / Math.sqrt(9*d);
