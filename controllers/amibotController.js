@@ -10,7 +10,7 @@ function askAmibot(req, res) {
   const postData = JSON.stringify({ query });
 
   const options = {
-    hostname: "amibot-smbs.onrender.com",
+    hostname: "amibot-c6oa.onrender.com",
     path: "/ask",
     method: "POST",
     headers: {
