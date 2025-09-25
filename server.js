@@ -6,11 +6,16 @@ const path = require("path");
 
 dotenv.config();
 const app = express();
-
+const corsOptions = {
+  origin: true,        // reflect the request origin (not '*')
+  credentials: true,   // allow cookies / credentialed requests
+  methods: ["GET","POST","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization", "X-Requested-With"],
+};
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
-
+app.options("*", cors(corsOptions));
 // Serve static files (e.g., images)
 app.use(express.static(path.join(__dirname, "public")));
 
