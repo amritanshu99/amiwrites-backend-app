@@ -19,6 +19,10 @@ function computeExpectedMs(words = 0) {
   return (Math.max(50, words) / 200) * 60 * 1000;
 }
 function isBotLike(dwell_ms, scroll_depth) {
+  // --- 7 sec logic: ignore any read-end fired within the first 7 seconds ---
+  if (dwell_ms != null && Number(dwell_ms) < 7000) return true;
+
+  // keep the original heuristic as-is for safety (unchanged otherwise)
   return (dwell_ms != null && Number(dwell_ms) < 5000) &&
          (scroll_depth != null && Number(scroll_depth) < 0.15);
 }
@@ -104,7 +108,7 @@ exports.getTrending = async (req, res) => {
 
       let weakClickBoost = 1.0;
       if (clicks > 0 && imps > 0) {
-        const ctrPart = Math.min(0.05, ctr * 0.05);              // up to +5% from CTR
+        const ctrPart = Math.min(0.05, ctr * 0.05);                // up to +5% from CTR
         const qtyPart = Math.min(0.03, Math.log1p(clicks) * 0.01); // up to +3% from volume
         weakClickBoost += Math.min(0.08, ctrPart + qtyPart);       // hard cap +8%
       }
