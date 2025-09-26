@@ -1,4 +1,7 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const MAIL_FROM = process.env.MAIL_FROM; // Must be verified in Resend
 
 exports.sendContactMail = async (req, res) => {
   try {
@@ -8,17 +11,15 @@ exports.sendContactMail = async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
+    if (!MAIL_FROM) {
+      console.error("MAIL_FROM not set in environment.");
+      return res.status(500).json({ message: "Mail sender not configured on server" });
+    }
 
-    const mailOptions = {
-      from: `"${name}" <${email}>`,
-      to: "amritanshu0909@gmail.com",
+    // Build email
+    const { error } = await resend.emails.send({
+      from: MAIL_FROM,
+      to: "amritanshu0909@gmail.com",  // your destination mailbox
       subject: "New Contact Form Submission",
       html: `
         <h3>Contact Form Message</h3>
@@ -26,9 +27,14 @@ exports.sendContactMail = async (req, res) => {
         <p><strong>Email:</strong> ${email}</p>
         <p><strong>Reason:</strong> ${reason}</p>
       `,
-    };
+      // If you want the reply to go back to the submitter:
+      reply_to: email
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+      console.error("Resend email error:", error);
+      return res.status(500).json({ message: "Failed to send message" });
+    }
 
     res.status(200).json({ message: "Message sent successfully" });
   } catch (error) {

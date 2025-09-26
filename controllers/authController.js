@@ -1,34 +1,33 @@
 const User = require("../models/Users");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+const { Resend } = require("resend");
 
 const JWT_SECRET = process.env.JWT_SECRET || "yourSecretKey";
 
-// Setup reusable transporter object with Gmail SMTP
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER, // Your Gmail email
-    pass: process.env.EMAIL_PASS, // Your Gmail app password or regular password if less secure apps enabled
-  },
-});
+// --- Resend setup (HTTPS, no SMTP) ---
+if (!process.env.RESEND_API_KEY) {
+  console.error("RESEND_API_KEY is not set. Emails will fail.");
+}
+const resend = new Resend(process.env.RESEND_API_KEY);
+const MAIL_FROM = process.env.MAIL_FROM; // must be a verified sender or domain in Resend
 
-// Helper to send emails
 async function sendEmail({ to, subject, html }) {
-  try {
-    await transporter.sendMail({
-      from: `"AmiVerse Support" <${process.env.EMAIL_USER}>`,
-      to,
-      subject,
-      html,
-    });
-  } catch (error) {
-    console.error("Error sending email:", error);
-    // optionally continue without blocking signup/login
+  if (!MAIL_FROM) throw new Error("MAIL_FROM not set. Configure MAIL_FROM env var.");
+  const { error } = await resend.emails.send({
+    from: MAIL_FROM,
+    to,
+    subject,
+    html,
+  });
+  if (error) {
+    // Re-throw to let caller decide whether to block or ignore the failure
+    throw error;
   }
 }
+
+// ------------------ Controllers ------------------
 
 exports.signup = async (req, res) => {
   try {
@@ -56,8 +55,8 @@ exports.signup = async (req, res) => {
     const user = new User({ username, email, password: hashedPassword });
     await user.save();
 
-    // Send welcome email on signup
-    await sendEmail({
+    // Fire-and-forget welcome email (don't block signup)
+    sendEmail({
       to: email,
       subject: "Welcome to AmiVerse! Your new writing adventure begins here.",
       html: `
@@ -68,7 +67,7 @@ exports.signup = async (req, res) => {
         <p>Happy writing and welcome to the family!</p>
         <p>Best regards,<br/><strong>The AmiVerse Team</strong></p>
       `,
-    });
+    }).catch(err => console.error("Welcome email error:", err?.message || err));
 
     const token = jwt.sign(
       { id: user._id, username: user.username },
@@ -98,8 +97,8 @@ exports.login = async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // Send "Welcome Back" email on login
-    await sendEmail({
+    // Fire-and-forget login email (don't block login)
+    sendEmail({
       to: user.email,
       subject: "Welcome Back to AmiVerse! Keep creating your magic.",
       html: `
@@ -110,7 +109,7 @@ exports.login = async (req, res) => {
         <p>Thanks for being a part of AmiVerse!</p>
         <p>Warm wishes,<br/><strong>The AmiVerse Team</strong></p>
       `,
-    });
+    }).catch(err => console.error("Login email error:", err?.message || err));
 
     res.json({ token });
   } catch (err) {
@@ -132,10 +131,10 @@ exports.requestPasswordReset = async (req, res) => {
     user.resetTokenExpiry = Date.now() + 3600000; // 1 hour
     await user.save();
 
-    // ✅ Use production reset URL
     const resetURL = `https://www.amiverse.in/reset-password/${token}`;
 
     try {
+      // Keep awaited to surface send errors to the user for this critical flow
       await sendEmail({
         to: user.email,
         subject: "Password Reset",
@@ -152,17 +151,14 @@ exports.requestPasswordReset = async (req, res) => {
       console.log(`✅ Password reset email sent to ${user.email}`);
       res.json({ message: "Password reset email sent" });
     } catch (emailErr) {
-      console.error("❌ Failed to send password reset email:", emailErr);
+      console.error("❌ Failed to send password reset email:", emailErr?.message || emailErr);
       res.status(500).json({ message: "Failed to send password reset email" });
     }
-
   } catch (err) {
     console.error("❌ requestPasswordReset error:", err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
-
-
 
 exports.resetPassword = async (req, res) => {
   try {
@@ -194,7 +190,6 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-
 exports.validateResetToken = async (req, res) => {
   try {
     const { token } = req.params;
@@ -216,7 +211,7 @@ exports.validateResetToken = async (req, res) => {
 };
 
 exports.verifyToken = (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
   const authHeader = req.header("Authorization");
   if (!authHeader) {
     return res.status(401).json({ valid: false, message: "Missing token" });
