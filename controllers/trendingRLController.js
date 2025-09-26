@@ -89,16 +89,34 @@ exports.getTrending = async (req, res) => {
           words: p.words || wordsFromBlog(p),
           category: p.category,
           publishedAt: safeDate(p),
+          // default zeros so weak-click boost is neutral on brand-new posts
+          clicks: 0,
+          impressions: 0,
         };
 
-      const theta = betaSample(Number(s.alpha) || PRIORS.alpha, Number(s.beta) || PRIORS.beta);
+      const alpha = Number(s.alpha) || PRIORS.alpha;
+      const beta  = Number(s.beta)  || PRIORS.beta;
+
+      // Weak click signal (tiny multiplicative boost, strictly capped)
+      const clicks = Number(s.clicks || 0);
+      const imps   = Number(s.impressions || 0);
+      const ctr    = imps > 0 ? (clicks / imps) : 0;
+
+      let weakClickBoost = 1.0;
+      if (clicks > 0 && imps > 0) {
+        const ctrPart = Math.min(0.05, ctr * 0.05);              // up to +5% from CTR
+        const qtyPart = Math.min(0.03, Math.log1p(clicks) * 0.01); // up to +3% from volume
+        weakClickBoost += Math.min(0.08, ctrPart + qtyPart);       // hard cap +8%
+      }
+
+      const theta = betaSample(alpha, beta);
 
       const pub = safeDate(p);
       const hoursOld = pub ? (now - new Date(pub)) / 3600000 : Number.POSITIVE_INFINITY;
       const freshBoost = hoursOld <= FRESH_HOURS ? FRESH_MULTIPLIER : 1.0;
       const jitter = 1 + Math.random() * 0.02; // tiny tie-break
 
-      return { post: p, score: theta * freshBoost * jitter };
+      return { post: p, score: theta * weakClickBoost * freshBoost * jitter };
     });
 
     scored.sort((a, b) => b.score - a.score);

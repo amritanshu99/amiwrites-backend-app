@@ -19,7 +19,7 @@ app.get("/ping", (req, res) => {
   res.status(200).send("pong");
 });
 
-// --- API Routes ---
+// --- API Routes --- 
 app.use("/api/auth", require("./routes/authRoutes"));              // Auth
 app.use("/api/blogs", require("./routes/blogRoutes"));             // Blog routes (protected)
 app.use("/api/portfolio", require("./routes/portfolioRoutes"));    // Portfolio routes
