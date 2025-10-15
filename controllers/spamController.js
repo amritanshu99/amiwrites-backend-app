@@ -7,7 +7,7 @@ exports.checkSpam = async (req, res) => {
   }
 
   try {
-    const flaskURL = "https://flask-spam-detector-lll5.onrender.com/predict";
+    const flaskURL = "https://flask-spam-detector-bz71.onrender.com/predict";
 
     const response = await fetch(flaskURL, {
       method: "POST",
