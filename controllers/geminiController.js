@@ -17,15 +17,16 @@ function generateGeminiContent(req, res) {
     ],
   });
 
-  const options = {
-    hostname: "generativelanguage.googleapis.com",
-    path: `/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(postData),
-    },
-  };
+const options = {
+  hostname: "generativelanguage.googleapis.com",
+  path: `/v1beta/models/gemini-flash-latest:generateContent?key=${API_KEY}`,
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(postData),
+  },
+};
+
 
   const request = https.request(options, (response) => {
     let data = "";
