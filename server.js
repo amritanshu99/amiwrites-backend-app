@@ -3,13 +3,30 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const path = require("path");
+const securityHeaders = require("./middleware/securityHeaders");
+const { buildCorsOptions } = require("./utils/security");
 
 dotenv.config();
+const requiredEnv = ["MONGO_URI", "JWT_SECRET"];
+const missingEnv = requiredEnv.filter((name) => !process.env[name]);
+
+if (missingEnv.length) {
+  console.error(
+    `Missing required environment variable(s): ${missingEnv.join(", ")}. ` +
+    "Create a local .env from .env.example or set these values in your deployment environment."
+  );
+  process.exit(1);
+}
+
 const app = express();
+const mongoServerSelectionTimeoutMS =
+  Number.parseInt(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS, 10) || 30000;
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+app.set("trust proxy", 1);
+app.use(securityHeaders);
+app.use(cors(buildCorsOptions()));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb" }));
 
 // Serve static files (e.g., images)
 app.use(express.static(path.join(__dirname, "public")));
@@ -19,41 +36,49 @@ app.get("/ping", (req, res) => {
   res.status(200).send("pong");
 });
 
-// --- API Routes --- 
-app.use("/api/auth", require("./routes/authRoutes"));              // Auth
-app.use("/api/blogs", require("./routes/blogRoutes"));             // Blog routes (protected)
-app.use("/api/portfolio", require("./routes/portfolioRoutes"));    // Portfolio routes
-app.use("/api", require("./routes/newsRoutes"));                   // News API
-app.use("/api", require("./routes/contactRoutes"));                // Contact form
-app.use("/api/gemini", require("./routes/geminiRoutes"));          // Gemini AI
+// API routes
+app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/blogs", require("./routes/blogRoutes"));
+app.use("/api/portfolio", require("./routes/portfolioRoutes"));
+app.use("/api", require("./routes/newsRoutes"));
+app.use("/api", require("./routes/contactRoutes"));
+app.use("/api/gemini", require("./routes/geminiRoutes"));
 app.use("/api/tasks", require("./routes/taskRoutes"));
-// ✅ Push Notification Routes
-app.use("/api", require("./routes/pushRoutes"));                   // Handles /api/subscribe
-//spam routhes
-app.use("/api", require("./routes/spamRoutes")); 
-//movie-reccomender 
+app.use("/api", require("./routes/pushRoutes"));
+app.use("/api", require("./routes/spamRoutes"));
 app.use("/api/recommender", require("./routes/recommenderRoutes"));
-// ✅ Base route for emotion analysis
-app.use("/api/emotion", require("./routes/emotionRoutes")); 
-// ✅ AmiBot Proxy Route
+app.use("/api/emotion", require("./routes/emotionRoutes"));
 app.use("/api/amibot", require("./routes/amibotRoutes"));
-
-// 🔥 RL Trending (Bandit) — NEW (non-conflicting)
 app.use("/api/trending-rl", require("./routes/trendingRLRoutes"));
 
+app.use((err, req, res, next) => {
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Payload too large" });
+  }
 
-// --- MongoDB Connection ---
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({ error: "Invalid JSON payload" });
+  }
+
+  return next(err);
+});
+
+// MongoDB connection
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: mongoServerSelectionTimeoutMS,
+  })
   .then(() => {
-    console.log("✅ Connected to MongoDB");
+    console.log("Connected to MongoDB");
 
-    // 🔁 Start daily decay cron for RL stats — NEW
     const { startDecayJob } = require("./utils/decay");
     startDecayJob();
 
     app.listen(process.env.PORT || 5000, () =>
-      console.log(`🚀 Server running at http://localhost:${process.env.PORT || 5000}`)
+      console.log(`Server running at http://localhost:${process.env.PORT || 5000}`)
     );
   })
-  .catch((err) => console.error("❌ MongoDB connection error:", err.message));
+  .catch((err) => {
+    console.error("MongoDB connection error:", err.message);
+    process.exit(1);
+  });

@@ -1,51 +1,33 @@
-const https = require("https");
 const NodeCache = require("node-cache");
+const { fetchJson } = require("../utils/httpClient");
 
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
-const newsCache = new NodeCache({ stdTTL: 300 }); // cache for 5 minutes
-
-function fetchUrl(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      let data = "";
-      res.on("data", (chunk) => {
-        data += chunk;
-      });
-      res.on("end", () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            const parsed = JSON.parse(data);
-            resolve(parsed);
-          } catch (e) {
-            reject(new Error("Invalid JSON response"));
-          }
-        } else {
-          reject(new Error(`Status Code: ${res.statusCode}`));
-        }
-      });
-    }).on("error", (err) => {
-      reject(err);
-    });
-  });
-}
+const newsCache = new NodeCache({ stdTTL: 300 });
 
 exports.getTechNews = async (req, res) => {
   try {
+    if (!NEWS_API_KEY) {
+      return res.status(500).json({ error: "News API is not configured" });
+    }
+
     const cacheKey = "tech-news";
     const cachedData = newsCache.get(cacheKey);
 
     if (cachedData) {
-        console.log("Tech news served from cache")
       return res.json({ source: "cache", ...cachedData });
     }
 
     const url = `https://gnews.io/api/v4/top-headlines?topic=technology&lang=en&country=in&apikey=${NEWS_API_KEY}`;
-    const data = await fetchUrl(url);
+    const { response, data } = await fetchJson(url, { timeoutMs: 10000 });
+
+    if (!response.ok) {
+      return res.status(response.status).json({ error: "Failed to fetch news" });
+    }
 
     newsCache.set(cacheKey, data);
     res.json({ source: "api", ...data });
   } catch (error) {
-    console.error("Error fetching news:", error);
+    console.error("Error fetching news:", error.message);
     res.status(500).json({ error: "Failed to fetch news" });
   }
 };

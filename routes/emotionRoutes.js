@@ -1,9 +1,8 @@
-// routes/emotionRoutes.js
 const express = require("express");
 const router = express.Router();
 const { analyzeEmotion } = require("../controllers/emotionController");
+const { aiRateLimiter } = require("../middleware/rateLimiters");
 
-// ✅ GET /api/emotion/:text
-router.get("/:text", analyzeEmotion);
+router.get("/:text", aiRateLimiter, analyzeEmotion);
 
 module.exports = router;

@@ -1,14 +1,34 @@
 const { Resend } = require("resend");
+const { escapeHtml, isValidEmail, normalizeEmail } = require("../utils/security");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const MAIL_FROM = process.env.MAIL_FROM; // Must be verified in Resend
+const MAIL_FROM = process.env.MAIL_FROM;
+const CONTACT_TO = process.env.CONTACT_TO_EMAIL || "amritanshu0909@gmail.com";
+let resendClient;
+
+function getResendClient() {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY not set. Configure RESEND_API_KEY env var.");
+  }
+
+  if (!resendClient) {
+    resendClient = new Resend(process.env.RESEND_API_KEY);
+  }
+
+  return resendClient;
+}
 
 exports.sendContactMail = async (req, res) => {
   try {
-    const { name, email, reason } = req.body;
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    const email = normalizeEmail(req.body.email);
+    const reason = typeof req.body.reason === "string" ? req.body.reason.trim() : "";
 
     if (!name || !email || !reason) {
       return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (name.length > 100 || reason.length > 5000 || !isValidEmail(email)) {
+      return res.status(400).json({ message: "Invalid contact form details" });
     }
 
     if (!MAIL_FROM) {
@@ -16,19 +36,17 @@ exports.sendContactMail = async (req, res) => {
       return res.status(500).json({ message: "Mail sender not configured on server" });
     }
 
-    // Build email
-    const { error } = await resend.emails.send({
+    const { error } = await getResendClient().emails.send({
       from: MAIL_FROM,
-      to: "amritanshu0909@gmail.com",  // your destination mailbox
+      to: CONTACT_TO,
       subject: "New Contact Form Submission",
       html: `
         <h3>Contact Form Message</h3>
-        <p><strong>Name:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Reason:</strong> ${reason}</p>
+        <p><strong>Name:</strong> ${escapeHtml(name)}</p>
+        <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+        <p><strong>Reason:</strong> ${escapeHtml(reason)}</p>
       `,
-      // If you want the reply to go back to the submitter:
-      reply_to: email
+      reply_to: email,
     });
 
     if (error) {

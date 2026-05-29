@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const { getMovieRecommendations } = require("../controllers/recommenderController");
+const { aiRateLimiter } = require("../middleware/rateLimiters");
 
-// 🎬 POST /api/recommender/recommend
-router.post("/recommend", getMovieRecommendations);
+router.post("/recommend", aiRateLimiter, getMovieRecommendations);
 
 module.exports = router;

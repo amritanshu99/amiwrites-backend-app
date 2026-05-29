@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const Blog = require("../models/Blog");
 const BlogStat = require("../models/BlogStat");
 const { betaSample } = require("../utils/beta");
+const { clampPositiveInt } = require("../utils/security");
 
 const PRIORS = { alpha: 1.5, beta: 1.0 };
 const FRESH_HOURS = 72;
@@ -50,7 +51,7 @@ async function resolveBlogByRef(ref) {
     const byId = await Blog.findById(hex).lean();
     if (byId) return { blog: byId, postId: hex };
   }
-  if (typeof ref === "string") {
+  if (typeof ref === "string" && ref.length <= 120) {
     const bySlug = await Blog.findOne({ slug: ref }).lean();
     if (bySlug) return { blog: bySlug, postId: String(bySlug._id) };
   }
@@ -60,8 +61,8 @@ async function resolveBlogByRef(ref) {
 // ---------- GET /api/trending-rl/trending?limit=4&windowDays=60&all=0 ----------
 exports.getTrending = async (req, res) => {
   try {
-    const limit = Math.min(Math.max(parseInt(req.query.limit || "4", 10), 1), 10);
-    const windowDays = parseInt(req.query.windowDays || "60", 10);
+    const limit = clampPositiveInt(req.query.limit, { defaultValue: 4, min: 1, max: 10 });
+    const windowDays = clampPositiveInt(req.query.windowDays, { defaultValue: 60, min: 1, max: 365 });
     const all = req.query.all === "1"; // debug bypass: include all posts regardless of time
     const now = new Date();
 
@@ -278,7 +279,20 @@ exports.trackReadEnd = async (req, res) => {
       lastUpdated: new Date(),
     };
 
-    await BlogStat.create(base);
+    try {
+      await BlogStat.create(base);
+    } catch (createErr) {
+      if (createErr.code === 11000) {
+        await BlogStat.updateOne(
+          { postId },
+          { $inc: inc, $set: { lastUpdated: new Date() } },
+          { upsert: false }
+        );
+        return res.status(200).json({ ok: true, engaged, ratio });
+      }
+      throw createErr;
+    }
+
     return res.status(200).json({ ok: true, engaged, ratio });
   } catch (e) {
     console.error("ReadEnd failed:", e?.message, e?.stack);

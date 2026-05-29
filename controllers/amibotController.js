@@ -1,60 +1,39 @@
-const https = require("https");
+const { fetchJson } = require("../utils/httpClient");
 
-function askAmibot(req, res) {
-  const { query } = req.body;
+const MAX_QUERY_LENGTH = 4000;
 
-  if (!query) {
-    return res.status(400).json({ error: "Query is required" });
-  }
+async function askAmibot(req, res) {
+  try {
+    const query = typeof req.body.query === "string" ? req.body.query.trim() : "";
 
-  const postData = JSON.stringify({ query });
+    if (!query) {
+      return res.status(400).json({ error: "Query is required" });
+    }
 
-  const options = {
-    hostname: "amibot-smbs.onrender.com",
-    path: "/ask",
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(postData),
-    },
-  };
+    if (query.length > MAX_QUERY_LENGTH) {
+      return res.status(400).json({ error: "Query is too long" });
+    }
 
-  const request = https.request(options, (response) => {
-    let data = "";
-
-    response.on("data", (chunk) => {
-      data += chunk;
+    const postData = JSON.stringify({ query });
+    const { response, data } = await fetchJson("https://amibot-smbs.onrender.com/ask", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(Buffer.byteLength(postData)),
+      },
+      body: postData,
+      timeoutMs: 20000,
     });
 
-    response.on("end", () => {
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        try {
-          const parsed = JSON.parse(data);
-          res.status(200).json({ botResponse: parsed });
-        } catch (err) {
-          console.error("❌ Error parsing AmiBot response:", err.message);
-          res.status(500).json({ error: "Failed to parse AmiBot response" });
-        }
-      } else {
-        try {
-          const errorData = JSON.parse(data);
-          res.status(response.statusCode).json({ error: errorData });
-        } catch {
-          res
-            .status(response.statusCode)
-            .json({ error: "Unknown error from AmiBot API" });
-        }
-      }
-    });
-  });
+    if (response.ok) {
+      return res.status(200).json({ botResponse: data });
+    }
 
-  request.on("error", (err) => {
-    console.error("❌ AmiBot API request error:", err.message);
+    return res.status(response.status).json({ error: data || "Unknown error from AmiBot API" });
+  } catch (err) {
+    console.error("AmiBot API request error:", err.message);
     res.status(500).json({ error: "Failed to reach AmiBot API" });
-  });
-
-  request.write(postData);
-  request.end();
+  }
 }
 
 module.exports = { askAmibot };
