@@ -89,6 +89,7 @@ function buildAllowedOrigins(env = process.env) {
 function buildCorsOptions(env = process.env) {
   const allowedOrigins = buildAllowedOrigins(env);
   const credentials = parseBoolean(env.CORS_CREDENTIALS, false);
+  const allowLocalDevelopmentOrigins = !isProductionEnv(env);
 
   return {
     origin(origin, callback) {
@@ -96,7 +97,12 @@ function buildCorsOptions(env = process.env) {
         return callback(null, true);
       }
 
-      return callback(null, allowedOrigins.has(normalizeOrigin(origin)));
+      const normalizedOrigin = normalizeOrigin(origin);
+      const isAllowed =
+        allowedOrigins.has(normalizedOrigin) ||
+        (allowLocalDevelopmentOrigins && isLocalOrigin(normalizedOrigin));
+
+      return callback(null, isAllowed);
     },
     credentials,
     maxAge: getCorsMaxAge(env),

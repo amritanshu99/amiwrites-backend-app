@@ -56,9 +56,15 @@ test("CORS allows local development origins outside production", async () => {
   const options = buildCorsOptions({ NODE_ENV: "development" });
 
   assert.equal(await corsAllows(options, "http://localhost:3000"), true);
+  assert.equal(await corsAllows(options, "http://localhost:3001"), true);
   assert.equal(await corsAllows(options, "http://localhost:5173"), true);
+  assert.equal(await corsAllows(options, "http://localhost:5174"), true);
+  assert.equal(await corsAllows(options, "http://localhost:8080"), true);
+  assert.equal(await corsAllows(options, "https://localhost:3001"), true);
   assert.equal(await corsAllows(options, "http://127.0.0.1:3000"), true);
+  assert.equal(await corsAllows(options, "http://127.0.0.1:3001"), true);
   assert.equal(await corsAllows(options, "http://127.0.0.1:5173"), true);
+  assert.equal(await corsAllows(options, "http://[::1]:3001"), true);
   assert.equal(await corsAllows(options, "http://evil.example"), false);
   assert.equal(options.credentials, false);
 });
