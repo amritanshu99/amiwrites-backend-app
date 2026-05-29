@@ -10,6 +10,11 @@ const authRateLimiter = createRateLimiter({
   max: envInt("AUTH_RATE_LIMIT_MAX", 30),
 });
 
+const apiRateLimiter = createRateLimiter({
+  windowMs: envInt("API_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
+  max: envInt("API_RATE_LIMIT_MAX", 600),
+});
+
 const publicWriteRateLimiter = createRateLimiter({
   windowMs: envInt("PUBLIC_WRITE_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
   max: envInt("PUBLIC_WRITE_RATE_LIMIT_MAX", 120),
@@ -27,6 +32,7 @@ const eventRateLimiter = createRateLimiter({
 
 module.exports = {
   aiRateLimiter,
+  apiRateLimiter,
   authRateLimiter,
   eventRateLimiter,
   publicWriteRateLimiter,

@@ -1,9 +1,21 @@
-const DEFAULT_ALLOWED_ORIGINS = [
+const DEFAULT_PRODUCTION_ORIGINS = [
   "https://www.amiverse.in",
   "https://amiverse.in",
+];
+
+const LOCAL_DEVELOPMENT_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:5173",
-  "http://localhost:5174",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+];
+
+const ORIGIN_ENV_KEYS = [
+  "ALLOWED_ORIGINS",
+  "CLIENT_URL",
+  "CORS_ORIGINS",
+  "CORS_ORIGIN",
+  "PUBLIC_FRONTEND_URL",
 ];
 
 function splitEnvList(value = "") {
@@ -13,18 +25,81 @@ function splitEnvList(value = "") {
     .filter(Boolean);
 }
 
-function buildCorsOptions() {
-  const configuredOrigins = splitEnvList(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN);
-  const allowedOrigins = new Set(configuredOrigins.length ? configuredOrigins : DEFAULT_ALLOWED_ORIGINS);
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
+function isProductionEnv(env = process.env) {
+  return env.NODE_ENV === "production";
+}
+
+function normalizeOrigin(value = "") {
+  const trimmed = String(value).trim();
+  if (!trimmed || trimmed === "*") return null;
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLocalOrigin(origin = "") {
+  try {
+    const { hostname } = new URL(origin);
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function getCorsMaxAge(env = process.env) {
+  const configured = Number.parseInt(env.CORS_MAX_AGE_SECONDS, 10);
+  if (Number.isFinite(configured) && configured >= 0) return configured;
+  return isProductionEnv(env) ? 86400 : 600;
+}
+
+function buildAllowedOrigins(env = process.env) {
+  const configuredOrigins = ORIGIN_ENV_KEYS
+    .flatMap((key) => splitEnvList(env[key]))
+    .map(normalizeOrigin)
+    .filter(Boolean);
+
+  const allowedOrigins = new Set(
+    configuredOrigins.length ? configuredOrigins : DEFAULT_PRODUCTION_ORIGINS
+  );
+
+  if (!isProductionEnv(env)) {
+    LOCAL_DEVELOPMENT_ORIGINS.forEach((origin) => allowedOrigins.add(origin));
+  }
+
+  if (isProductionEnv(env)) {
+    for (const origin of allowedOrigins) {
+      if (isLocalOrigin(origin)) allowedOrigins.delete(origin);
+    }
+  }
+
+  return allowedOrigins;
+}
+
+function buildCorsOptions(env = process.env) {
+  const allowedOrigins = buildAllowedOrigins(env);
+  const credentials = parseBoolean(env.CORS_CREDENTIALS, false);
 
   return {
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin)) {
+      if (!origin) {
         return callback(null, true);
       }
-      return callback(null, false);
+
+      return callback(null, allowedOrigins.has(normalizeOrigin(origin)));
     },
-    credentials: true,
+    credentials,
+    maxAge: getCorsMaxAge(env),
     optionsSuccessStatus: 204,
   };
 }
@@ -104,6 +179,7 @@ function createRateLimiter({
     res.setHeader("RateLimit-Reset", String(Math.ceil(entry.resetAt / 1000)));
 
     if (entry.count > max) {
+      res.setHeader("Retry-After", String(Math.ceil((entry.resetAt - now) / 1000)));
       return res.status(429).json({ message });
     }
 
@@ -112,6 +188,7 @@ function createRateLimiter({
 }
 
 module.exports = {
+  buildAllowedOrigins,
   buildCorsOptions,
   clampPositiveInt,
   createRateLimiter,
