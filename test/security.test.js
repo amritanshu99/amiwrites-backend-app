@@ -75,9 +75,22 @@ test("CORS production origins come from env and exclude localhost and wildcards"
 
   assert.deepEqual(
     [...allowedOrigins].sort(),
-    ["https://app.example.com", "https://www.amiverse.in"]
+    ["https://amiverse.in", "https://app.example.com", "https://www.amiverse.in"]
   );
   assert.equal(await corsAllows(options, "https://app.example.com"), true);
+  assert.equal(await corsAllows(options, "https://www.amiverse.in"), true);
+  assert.equal(await corsAllows(options, "https://amiverse.in"), true);
   assert.equal(await corsAllows(options, "http://localhost:3000"), false);
   assert.equal(options.credentials, true);
+});
+
+test("CORS production still allows Amiverse when env contains only localhost", async () => {
+  const options = buildCorsOptions({
+    NODE_ENV: "production",
+    CLIENT_URL: "http://localhost:3000",
+  });
+
+  assert.equal(await corsAllows(options, "https://www.amiverse.in"), true);
+  assert.equal(await corsAllows(options, "https://amiverse.in"), true);
+  assert.equal(await corsAllows(options, "http://localhost:3000"), false);
 });

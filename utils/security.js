@@ -69,9 +69,9 @@ function buildAllowedOrigins(env = process.env) {
     .map(normalizeOrigin)
     .filter(Boolean);
 
-  const allowedOrigins = new Set(
-    configuredOrigins.length ? configuredOrigins : DEFAULT_PRODUCTION_ORIGINS
-  );
+  const allowedOrigins = new Set(configuredOrigins);
+
+  DEFAULT_PRODUCTION_ORIGINS.forEach((origin) => allowedOrigins.add(origin));
 
   if (!isProductionEnv(env)) {
     LOCAL_DEVELOPMENT_ORIGINS.forEach((origin) => allowedOrigins.add(origin));
