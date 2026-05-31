@@ -47,19 +47,19 @@ const DEFAULT_SCHEDULE_RULES = [
 
 const DEFAULT_PULSE_CONFIG = {
   isEnabled: true,
-  widgetTitle: "Amiverse Pulse",
+  widgetTitle: "Amiverse Beacon",
   mode: "auto",
   manualStatus: "Building Amiverse",
   manualMood: "Focused",
   manualVibe: "Future-ready",
   manualSuggestion: "Small progress compounds daily.",
   ctaPrimary: {
-    label: "Explore Projects",
-    url: "/projects",
+    label: "",
+    url: "",
   },
   ctaSecondary: {
-    label: "Read Blog",
-    url: "/blog",
+    label: "",
+    url: "",
   },
   ownerCity: "Greater Noida",
   ownerRegion: "Uttar Pradesh",

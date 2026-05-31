@@ -3,6 +3,7 @@ const { fetchJson } = require("../utils/httpClient");
 
 const ADMIN_USERNAME = "amritanshu99";
 const DEFAULT_TIMEZONE = "Asia/Kolkata";
+const BEACON_TITLE = "Amiverse Beacon";
 const WEATHER_CACHE_TTL_MS = 10 * 60 * 1000;
 const weatherCache = new Map();
 
@@ -21,6 +22,12 @@ function isAdmin(req) {
 function sanitizeString(value, maxLength) {
   if (value === undefined || value === null) return "";
   return String(value).trim().slice(0, maxLength);
+}
+
+function normalizeWidgetTitle(title) {
+  const normalizedTitle = sanitizeString(title, 120);
+  if (!normalizedTitle || /pulse/i.test(normalizedTitle)) return BEACON_TITLE;
+  return normalizedTitle;
 }
 
 function coerceBoolean(value) {
@@ -94,7 +101,7 @@ function serializeScheduleRules(scheduleRules) {
 function serializePublicConfig(config) {
   return {
     isEnabled: Boolean(config.isEnabled),
-    widgetTitle: config.widgetTitle || "Amiverse Pulse",
+    widgetTitle: normalizeWidgetTitle(config.widgetTitle),
     mode: config.mode || "auto",
     manualStatus: config.manualStatus || "Building Amiverse",
     manualMood: config.manualMood || "Focused",
@@ -214,6 +221,9 @@ function buildPulseUpdate(body) {
   }
 
   addStringField(update, body, "widgetTitle", 120);
+  if (hasOwn(update, "widgetTitle")) {
+    update.widgetTitle = normalizeWidgetTitle(update.widgetTitle);
+  }
   addStringField(update, body, "manualStatus", 160);
   addStringField(update, body, "manualMood", 80);
   addStringField(update, body, "manualVibe", 80);
@@ -307,14 +317,14 @@ exports.getPublicPulse = async (req, res) => {
     console.error("Pulse config fetch failed:", err.message || err);
     return res.status(500).json({
       success: false,
-      message: "Unable to load Amiverse Pulse",
+      message: "Unable to load Amiverse Beacon",
     });
   }
 };
 
 exports.getAdminPulse = async (req, res) => {
   if (!isAdmin(req)) {
-    return res.status(403).json({ success: false, message: "Only admin can view Pulse settings" });
+    return res.status(403).json({ success: false, message: "Only admin can view Beacon settings" });
   }
 
   try {
@@ -327,7 +337,7 @@ exports.getAdminPulse = async (req, res) => {
     console.error("Pulse admin fetch failed:", err.message || err);
     return res.status(500).json({
       success: false,
-      message: "Unable to load Pulse settings",
+      message: "Unable to load Beacon settings",
     });
   }
 };
@@ -341,7 +351,7 @@ exports.getOwnerWeather = async (req, res) => {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
       return res.status(422).json({
         success: false,
-        message: "Pulse owner location is not configured",
+        message: "Beacon owner location is not configured",
       });
     }
 
@@ -396,7 +406,7 @@ exports.getOwnerWeather = async (req, res) => {
 
 exports.updatePulse = async (req, res) => {
   if (!isAdmin(req)) {
-    return res.status(403).json({ success: false, message: "Only admin can update Pulse settings" });
+    return res.status(403).json({ success: false, message: "Only admin can update Beacon settings" });
   }
 
   try {
@@ -405,7 +415,7 @@ exports.updatePulse = async (req, res) => {
     if (errors.length) {
       return res.status(400).json({
         success: false,
-        message: "Invalid Pulse settings",
+        message: "Invalid Beacon settings",
         errors,
       });
     }
@@ -414,7 +424,7 @@ exports.updatePulse = async (req, res) => {
     if (!Object.keys(update).length) {
       return res.json({
         success: true,
-        message: "Amiverse Pulse updated successfully",
+        message: "Amiverse Beacon updated successfully",
         data: serializeAdminConfig(config),
       });
     }
@@ -429,14 +439,14 @@ exports.updatePulse = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Amiverse Pulse updated successfully",
+      message: "Amiverse Beacon updated successfully",
       data: serializeAdminConfig(updatedConfig),
     });
   } catch (err) {
     console.error("Pulse update failed:", err.message || err);
     return res.status(500).json({
       success: false,
-      message: "Unable to update Amiverse Pulse",
+      message: "Unable to update Amiverse Beacon",
     });
   }
 };
