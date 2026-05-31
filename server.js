@@ -57,6 +57,7 @@ app.get("/ping", (req, res) => {
 app.use("/api", apiRateLimiter);
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/blogs", require("./routes/blogRoutes"));
+app.use("/api/pulse", require("./routes/pulse.routes"));
 app.use("/api/portfolio", require("./routes/portfolioRoutes"));
 app.use("/api", require("./routes/newsRoutes"));
 app.use("/api", require("./routes/contactRoutes"));
