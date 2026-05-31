@@ -307,6 +307,32 @@ function normalizeWeatherData(weatherData, config) {
   };
 }
 
+function getCountryDisplayName(countryCode) {
+  const normalizedCode = sanitizeString(countryCode, 3).toUpperCase();
+  if (!normalizedCode) return "";
+
+  try {
+    const displayNames = new Intl.DisplayNames(["en"], { type: "region" });
+    return displayNames.of(normalizedCode) || normalizedCode;
+  } catch {
+    return normalizedCode;
+  }
+}
+
+function normalizeReverseGeocodeData(location) {
+  const ownerCity = sanitizeString(location?.name, 120);
+  const ownerRegion = sanitizeString(location?.state, 120);
+  const ownerCountry = getCountryDisplayName(location?.country);
+  const locationLabel = [ownerCity, ownerCountry].filter(Boolean).join(", ");
+
+  return {
+    ownerCity,
+    ownerRegion,
+    ownerCountry,
+    locationLabel,
+  };
+}
+
 exports.getPublicPulse = async (req, res) => {
   try {
     const config = await getOrCreatePulseConfig();
@@ -339,6 +365,77 @@ exports.getAdminPulse = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Unable to load Ami Pulse settings",
+    });
+  }
+};
+
+exports.reverseGeocodeLocation = async (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).json({ success: false, message: "Only admin can update Ami Pulse location" });
+  }
+
+  try {
+    const latitude = coerceNumber(req.query.lat);
+    const longitude = coerceNumber(req.query.lon);
+
+    if (latitude === null || latitude < -90 || latitude > 90) {
+      return res.status(400).json({
+        success: false,
+        message: "Latitude must be a number between -90 and 90",
+      });
+    }
+
+    if (longitude === null || longitude < -180 || longitude > 180) {
+      return res.status(400).json({
+        success: false,
+        message: "Longitude must be a number between -180 and 180",
+      });
+    }
+
+    const apiKey = process.env.OPENWEATHER_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        message: "Location lookup is not configured",
+      });
+    }
+
+    const url = new URL("https://api.openweathermap.org/geo/1.0/reverse");
+    url.searchParams.set("lat", String(latitude));
+    url.searchParams.set("lon", String(longitude));
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("appid", apiKey);
+
+    const { response, data } = await fetchJson(url.toString(), {
+      timeoutMs: 8000,
+      maxResponseBytes: 64 * 1024,
+    });
+
+    if (!response.ok) {
+      console.error("OpenWeather reverse geocode failed:", response.status);
+      return res.status(502).json({
+        success: false,
+        message: "Location lookup is temporarily unavailable",
+      });
+    }
+
+    const [location] = Array.isArray(data) ? data : [];
+    if (!location) {
+      return res.status(404).json({
+        success: false,
+        message: "No city found for these coordinates",
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: normalizeReverseGeocodeData(location),
+    });
+  } catch (err) {
+    console.error("Ami Pulse location lookup failed:", err.message || err);
+    return res.status(502).json({
+      success: false,
+      message: "Location lookup is temporarily unavailable",
     });
   }
 };
