@@ -47,7 +47,7 @@ const DEFAULT_SCHEDULE_RULES = [
 
 const DEFAULT_PULSE_CONFIG = {
   isEnabled: true,
-  widgetTitle: "Amiverse Beacon",
+  widgetTitle: "Ami Pulse",
   mode: "auto",
   manualStatus: "Building Amiverse",
   manualMood: "Focused",
