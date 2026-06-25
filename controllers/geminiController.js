@@ -2,7 +2,10 @@ const { fetchText } = require("../utils/httpClient");
 
 const MAX_PROMPT_LENGTH = 8000;
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
-const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash"];
+const DEFAULT_FALLBACK_MODELS = [
+  "gemini-flash-lite-latest",
+  "gemini-3.1-flash-lite",
+];
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_API_KEY_ENV_KEYS = [
   "GEMINI_API_KEY",

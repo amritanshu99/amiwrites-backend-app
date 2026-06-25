@@ -40,7 +40,13 @@ test("Gemini model list uses configured primary and stable fallback", () => {
       GEMINI_MODEL: "gemini-flash-latest",
       GEMINI_FALLBACK_MODELS: "gemini-3.5-flash, gemini-2.5-flash",
     }),
-    ["gemini-flash-latest", "gemini-3.5-flash", "gemini-2.5-flash"]
+    [
+      "gemini-flash-latest",
+      "gemini-3.5-flash",
+      "gemini-2.5-flash",
+      "gemini-flash-lite-latest",
+      "gemini-3.1-flash-lite",
+    ]
   );
 });
 
@@ -50,7 +56,12 @@ test("Gemini model list normalizes quoted model names and models prefix", () => 
       GEMINI_MODEL: '"models/gemini-flash-latest"',
       GEMINI_FALLBACK_MODELS: "'models/gemini-2.5-flash'",
     }),
-    ["gemini-flash-latest", "gemini-2.5-flash"]
+    [
+      "gemini-flash-latest",
+      "gemini-2.5-flash",
+      "gemini-flash-lite-latest",
+      "gemini-3.1-flash-lite",
+    ]
   );
 });
 
@@ -119,7 +130,7 @@ test("generateGeminiContent falls back when configured Gemini model is unavailab
     assert.deepEqual(res.body, { response: "Ok" });
     assert.equal(calls.length, 2);
     assert.match(calls[0].url, /gemini-flash-latest:generateContent$/);
-    assert.match(calls[1].url, /gemini-2\.5-flash:generateContent$/);
+    assert.match(calls[1].url, /gemini-flash-lite-latest:generateContent$/);
     assert.equal(calls[0].options.headers["x-goog-api-key"], "test-key");
   } finally {
     global.fetch = originalFetch;
