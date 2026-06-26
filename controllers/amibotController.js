@@ -148,6 +148,23 @@ function rowsToSheetText(sheetName, rows = []) {
   return lines.join("\n");
 }
 
+function normalizeExcelSheets(parsedSheets) {
+  if (!Array.isArray(parsedSheets) || !parsedSheets.length) return [];
+
+  if (parsedSheets.every((sheet) => Array.isArray(sheet?.data))) {
+    return parsedSheets.map((sheet, index) => ({
+      sheet: sheet.sheet || `Sheet ${index + 1}`,
+      data: sheet.data,
+    }));
+  }
+
+  if (parsedSheets.every((row) => Array.isArray(row))) {
+    return [{ sheet: "Sheet 1", data: parsedSheets }];
+  }
+
+  return [];
+}
+
 async function extractPdfText(file) {
   const parsed = await pdfParse(file.buffer);
   return String(parsed?.text || "").trim();
@@ -157,31 +174,20 @@ async function extractExcelText(file) {
   let sheets = [];
 
   try {
-    sheets = await readExcelFile(file.buffer);
+    sheets = normalizeExcelSheets(await readExcelFile(file.buffer));
   } catch {
     sheets = [];
   }
 
-  if (Array.isArray(sheets) && sheets.length && Array.isArray(sheets[0]?.data)) {
-    return sheets
-      .map((sheet) => rowsToSheetText(sheet.sheet || "Sheet", sheet.data))
-      .filter((sheetText) => sheetText.trim())
-      .join("\n\n");
-  }
-
-  if (!Array.isArray(sheets) || !sheets.length) {
+  if (!sheets.length) {
     const rows = await readExcelFile.readSheet(file.buffer);
-    return rowsToSheetText("Sheet 1", rows);
+    sheets = [{ sheet: "Sheet 1", data: rows }];
   }
 
-  const sheetTexts = [];
-  for (const sheet of sheets) {
-    const rows = Array.isArray(sheet) ? sheet : [];
-    const sheetText = rowsToSheetText("Sheet", rows);
-    if (sheetText.trim()) sheetTexts.push(sheetText);
-  }
-
-  return sheetTexts.join("\n\n");
+  return sheets
+    .map((sheet) => rowsToSheetText(sheet.sheet || "Sheet", sheet.data))
+    .filter((sheetText) => sheetText.split("\n").length > 1)
+    .join("\n\n");
 }
 
 async function extractTextFromFile(file, sourceType) {
