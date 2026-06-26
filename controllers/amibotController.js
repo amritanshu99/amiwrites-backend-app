@@ -11,7 +11,8 @@ const AmiBotQuestion = require("../models/AmiBotQuestion");
 const User = require("../models/Users");
 const { generateGeminiText } = require("../utils/geminiService");
 const {
-  chunkText,
+  KNOWLEDGE_RECORD_SEPARATOR,
+  chunkKnowledgeText,
   formatKnowledgeContext,
   getDirectAmiBotReply,
   makeTokenRegex,
@@ -26,6 +27,7 @@ const MAX_QUERY_LENGTH = 4000;
 const MAX_ADMIN_ANSWER_LENGTH = 12000;
 const DEFAULT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_CHUNKS_PER_UPLOAD = 300;
+const DEFAULT_AMIBOT_TEMPERATURE = 0.35;
 const UNKNOWN_GUEST_REPLY =
   "I do not have this answer in the uploaded AmiBot knowledge yet.";
 const UNKNOWN_USER_REPLY =
@@ -41,6 +43,15 @@ function getUploadMaxBytes() {
 function getMaxChunksPerUpload() {
   const configured = Number.parseInt(process.env.AMIBOT_MAX_CHUNKS_PER_UPLOAD, 10);
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_CHUNKS_PER_UPLOAD;
+}
+
+function getAmiBotTemperature() {
+  const configured = Number.parseFloat(process.env.AMIBOT_GEMINI_TEMPERATURE);
+  if (Number.isFinite(configured) && configured >= 0 && configured <= 1) {
+    return configured;
+  }
+
+  return DEFAULT_AMIBOT_TEMPERATURE;
 }
 
 function getResendClient() {
@@ -125,7 +136,7 @@ function rowsToSheetText(sheetName, rows = []) {
     : [];
   const hasHeader = headerRow.some(Boolean);
   const dataRows = hasHeader ? rows.slice(1) : rows;
-  const lines = [];
+  const records = [];
 
   dataRows.forEach((row, rowIndex) => {
     const values = Array.isArray(row) ? row.map(formatCellValue) : [];
@@ -141,12 +152,19 @@ function rowsToSheetText(sheetName, rows = []) {
       })
       .filter(Boolean);
 
-    if (cells.length) {
-      lines.push(`Row ${rowIndex + 1}: ${cells.join(" | ")}`);
-    }
+    if (!cells.length) return;
+
+    const excelRowNumber = hasHeader ? rowIndex + 2 : rowIndex + 1;
+    records.push(
+      [
+        `Sheet: ${sheetName || "Sheet 1"}`,
+        `Row: ${excelRowNumber}`,
+        ...cells,
+      ].join("\n")
+    );
   });
 
-  return [`Sheet: ${sheetName || "Sheet 1"}`, ...lines].join("\n\n");
+  return records.join(KNOWLEDGE_RECORD_SEPARATOR);
 }
 
 function normalizeExcelSheets(parsedSheets) {
@@ -219,8 +237,8 @@ async function extractExcelText(file) {
 
   return sheets
     .map((sheet) => rowsToSheetText(sheet.sheet || "Sheet", sheet.data))
-    .filter((sheetText) => sheetText.split("\n").length > 1)
-    .join("\n\n");
+    .filter(Boolean)
+    .join(KNOWLEDGE_RECORD_SEPARATOR);
 }
 
 async function extractTextFromFile(file, sourceType) {
@@ -239,7 +257,7 @@ async function createKnowledgeSourceWithChunks({
   text,
   metadata = {},
 }) {
-  const chunks = chunkText(text);
+  const chunks = chunkKnowledgeText(text);
   const maxChunks = getMaxChunksPerUpload();
 
   if (!chunks.length) {
@@ -295,24 +313,26 @@ function uniqueChunks(chunks = []) {
 }
 
 async function findRelevantKnowledge(query, { limit = 8 } = {}) {
-  const tokens = normalizeSearchTokens(query);
+  const tokens = normalizeSearchTokens(query, { maxTokens: 24 });
   if (!tokens.length) return [];
 
   const chunks = [];
-  const textSearch = tokens.join(" ");
+  const textSearch = tokens.filter((token) => !token.includes("-")).join(" ");
 
-  try {
-    const textMatches = await AmiBotKnowledgeChunk.find(
-      { $text: { $search: textSearch } },
-      { score: { $meta: "textScore" } }
-    )
-      .sort({ score: { $meta: "textScore" } })
-      .limit(limit)
-      .lean();
+  if (textSearch) {
+    try {
+      const textMatches = await AmiBotKnowledgeChunk.find(
+        { $text: { $search: textSearch } },
+        { score: { $meta: "textScore" } }
+      )
+        .sort({ score: { $meta: "textScore" } })
+        .limit(limit)
+        .lean();
 
-    chunks.push(...textMatches);
-  } catch (error) {
-    console.error("AmiBot text search failed:", error.message || error);
+      chunks.push(...textMatches);
+    } catch (error) {
+      console.error("AmiBot text search failed:", error.message || error);
+    }
   }
 
   if (chunks.length < limit) {
@@ -334,10 +354,14 @@ function buildGroundedPrompt({ query, context }) {
 You are AmiBot for AmiVerse.
 Answer the user's question using only the provided AmiBot knowledge context.
 Do not use outside knowledge, guesses, or assumptions.
+Choose the most relevant single knowledge record unless the question asks for a list, comparison, or summary.
+When a matching record contains an "Answer:" field, use that field as the factual source.
+You may paraphrase the wording naturally, but preserve exact facts, names, dates, numbers, URLs, titles, and relationships.
+If the same question is asked again, vary the phrasing lightly while keeping the answer correct.
 If the context does not contain the answer, return answerable as false.
 
 Return valid JSON only in this exact shape:
-{"answerable":true,"answer":"Your concise answer from the context."}
+{"answerable":true,"answer":"Your concise, natural answer from the context."}
 
 If the answer is missing:
 {"answerable":false,"answer":"I do not have this answer in the uploaded AmiBot knowledge yet."}
@@ -511,7 +535,12 @@ async function answerFromDirectReply(req, res, directReply) {
 async function answerFromKnowledge(req, res, query, relevantChunks) {
   const context = formatKnowledgeContext(relevantChunks);
   const prompt = buildGroundedPrompt({ query, context });
-  const { text } = await generateGeminiText(prompt);
+  const { text } = await generateGeminiText(prompt, {
+    generationConfig: {
+      temperature: getAmiBotTemperature(),
+      topP: 0.9,
+    },
+  });
   const structuredAnswer = parseStructuredAnswer(text);
   const answer = structuredAnswer?.answer || text.trim();
   const answerable = structuredAnswer ? structuredAnswer.answerable : Boolean(answer);

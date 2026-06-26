@@ -2,6 +2,7 @@ const { escapeRegExp } = require("./security");
 
 const DEFAULT_CHUNK_CHARS = 1800;
 const DEFAULT_CHUNK_OVERLAP = 220;
+const KNOWLEDGE_RECORD_SEPARATOR = "\n\n--- AMIBOT KNOWLEDGE RECORD ---\n\n";
 const DIRECT_REPLIES = {
   greeting: {
     answer: "Hi! I am AmiBot. Ask me anything from the uploaded AmiBot knowledge.",
@@ -35,6 +36,7 @@ const STOP_WORDS = new Set([
   "could",
   "do",
   "does",
+  "did",
   "for",
   "from",
   "give",
@@ -71,6 +73,73 @@ const STOP_WORDS = new Set([
   "your",
 ]);
 
+const QUERY_ALIASES = [
+  {
+    pattern: /\b(who are you|whats your name|what is your name|your name|full name|preferred name|short name|nickname)\b/,
+    terms: ["name", "identity", "who-are-you", "your-name", "full-name", "preferred-name"],
+  },
+  {
+    pattern: /\b(what do you do|profession|occupation|job role|work role|your role)\b/,
+    terms: ["profession", "occupation", "job", "role", "what-do-you-do"],
+  },
+  {
+    pattern: /\b(how old|your age|current age)\b/,
+    terms: ["age", "how-old", "your-age", "current-age"],
+  },
+  {
+    pattern: /\b(date of birth|birthdate|birthday|dob|when born|when were you born)\b/,
+    terms: ["date-of-birth", "birthdate", "birthday", "dob", "when-born"],
+  },
+  {
+    pattern: /\b(where born|birth place|birth city|native place|where were you born)\b/,
+    terms: ["birth-place", "where-born", "birth-city", "native-place"],
+  },
+  {
+    pattern: /\b(where are you based|where do you live|current location|living in|base location|based in)\b/,
+    terms: ["base-location", "based-in", "current-location", "living-in"],
+  },
+  {
+    pattern: /\b(where do you work|work now|current company|present company|current employer|current organization|current organisation)\b/,
+    terms: ["current-organizations", "work-now", "present-company", "current-employer"],
+  },
+  {
+    pattern: /\b(designation|job title|role in company|current designation)\b/,
+    terms: ["current-designation", "designation", "job-title", "role-in-company"],
+  },
+  {
+    pattern: /\b(tech stack|tools you use|technologies used)\b/,
+    terms: ["skills", "key-skills", "main-skills", "tech-stack", "technologies-used"],
+  },
+  {
+    pattern: /\b(ongoing projects|current projects|dream projects|what are you building|what projects are you building)\b/,
+    terms: ["projects", "ongoing-projects", "current-projects", "dream-projects"],
+  },
+  {
+    pattern: /\b(hobbies|interests|free time|leisure|what do you like to do)\b/,
+    terms: ["hobbies", "interests", "free-time-activities", "leisure"],
+  },
+  {
+    pattern: /\b(workout|training|fitness routine|health goal|athletic goal|fitness goal)\b/,
+    terms: ["fitness", "fitness-routine", "workout", "training", "fitness-goal"],
+  },
+  {
+    pattern: /\b(college|university|degree|qualification|education|where did you study|alma mater|graduation year|schooling|school)\b/,
+    terms: ["education", "college", "university", "degree", "qualification", "graduation-year", "schooling"],
+  },
+  {
+    pattern: /\b(married|marital status|single or married|wife|relationship|couple|wedding)\b/,
+    terms: ["relationship-status", "marriage", "marital-status", "wife", "couple"],
+  },
+  {
+    pattern: /\b(fav|favorite|favourite|preferred|you like|love to)\b/,
+    terms: ["favorite", "favourite", "preferred", "preferences-interests"],
+  },
+  {
+    pattern: /\b(what is amibot|who is amibot|about amibot|amiverse bot|digital soul)\b/,
+    terms: ["amibot", "bot-persona", "digital-soul", "amiverse-bot"],
+  },
+];
+
 function normalizeQuestion(value = "") {
   return String(value)
     .trim()
@@ -84,6 +153,15 @@ function normalizeCasualMessage(value = "") {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeSearchText(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
     .replace(/\s+/g, " ");
 }
 
@@ -113,19 +191,55 @@ function getDirectAmiBotReply(query = "") {
 
 function normalizeSearchTokens(query = "", { maxTokens = 12 } = {}) {
   const seen = new Set();
-  const tokens = String(query)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, " ")
+  const tokens = [];
+  const normalizedQuery = normalizeSearchText(query);
+  const rawTokens = normalizedQuery
     .split(/\s+/)
     .map((token) => token.replace(/^-+|-+$/g, ""))
-    .filter((token) => token.length >= 3 && !STOP_WORDS.has(token))
-    .filter((token) => {
-      if (seen.has(token)) return false;
-      seen.add(token);
-      return true;
-    });
+    .filter(Boolean);
+
+  const addToken = (value) => {
+    const token = String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/^-+|-+$/g, "");
+
+    if (token.length < 3) return;
+    if (!token.includes("-") && STOP_WORDS.has(token)) return;
+    if (seen.has(token)) return;
+
+    seen.add(token);
+    tokens.push(token);
+  };
+
+  rawTokens.forEach(addToken);
+
+  if (tokens.length <= 2) {
+    for (const alias of QUERY_ALIASES) {
+      if (alias.pattern.test(normalizedQuery)) {
+        alias.terms.forEach(addToken);
+      }
+    }
+  }
+
+  if (tokens.length <= 2) {
+    addShortQueryPhrases(rawTokens, addToken);
+  }
 
   return tokens.slice(0, maxTokens);
+}
+
+function addShortQueryPhrases(rawTokens = [], addToken) {
+  const phraseWords = rawTokens.filter((token) => token.length >= 2 && token !== "please");
+
+  if (phraseWords.length < 2 || phraseWords.length > 8) return;
+
+  const maxWindow = Math.min(4, phraseWords.length);
+  for (let size = maxWindow; size >= 2; size -= 1) {
+    for (let index = 0; index <= phraseWords.length - size; index += 1) {
+      addToken(phraseWords.slice(index, index + size).join("-"));
+    }
+  }
 }
 
 function makeTokenRegex(tokens) {
@@ -140,8 +254,15 @@ function scoreChunkAgainstTokens(chunkText = "", tokens = []) {
   let score = 0;
 
   for (const token of tokens) {
+    const spacedToken = token.replace(/-/g, " ");
     const tokenRegex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "i");
-    if (tokenRegex.test(normalizedText)) score += 2;
+    const spacedRegex = spacedToken !== token
+      ? new RegExp(`\\b${escapeRegExp(spacedToken)}\\b`, "i")
+      : null;
+
+    if (token.includes("-") && (normalizedText.includes(token) || spacedRegex?.test(normalizedText))) {
+      score += 4;
+    } else if (tokenRegex.test(normalizedText)) score += 2;
     else if (normalizedText.includes(token)) score += 1;
   }
 
@@ -214,6 +335,17 @@ function chunkText(text = "", { maxChars = DEFAULT_CHUNK_CHARS, overlap = DEFAUL
   return chunks;
 }
 
+function chunkKnowledgeText(text = "", options = {}) {
+  const records = String(text)
+    .split(KNOWLEDGE_RECORD_SEPARATOR)
+    .map((record) => record.trim())
+    .filter(Boolean);
+
+  if (records.length <= 1) return chunkText(text, options);
+
+  return records.flatMap((record) => chunkText(record, options));
+}
+
 function formatKnowledgeContext(chunks = [], maxChars = 7000) {
   let usedChars = 0;
   const formatted = [];
@@ -264,6 +396,8 @@ function parseStructuredAnswer(raw = "") {
 }
 
 module.exports = {
+  KNOWLEDGE_RECORD_SEPARATOR,
+  chunkKnowledgeText,
   chunkText,
   formatKnowledgeContext,
   getDirectAmiBotReply,

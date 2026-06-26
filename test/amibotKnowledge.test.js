@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  KNOWLEDGE_RECORD_SEPARATOR,
+  chunkKnowledgeText,
   chunkText,
   getDirectAmiBotReply,
   normalizeQuestion,
@@ -18,6 +20,15 @@ test("normalizeSearchTokens removes filler words and keeps useful unique tokens"
     normalizeSearchTokens("Tell me about AmiBot projects and AmiBot skills"),
     ["amibot", "projects", "skills"]
   );
+});
+
+test("normalizeSearchTokens expands natural profile questions into sheet tags", () => {
+  assert.deepEqual(
+    normalizeSearchTokens("Who are you?").slice(0, 3),
+    ["name", "identity", "who-are-you"]
+  );
+
+  assert.ok(normalizeSearchTokens("What do you do?").includes("profession"));
 });
 
 test("getDirectAmiBotReply handles casual chat without requiring knowledge", () => {
@@ -43,6 +54,19 @@ test("chunkText splits long text into bounded chunks", () => {
   assert.ok(chunks.length > 1);
   assert.ok(chunks.every((chunk) => chunk.length <= 180));
   assert.match(chunks.join("\n"), /Paragraph 10/);
+});
+
+test("chunkKnowledgeText keeps imported sheet records separate", () => {
+  const chunks = chunkKnowledgeText(
+    [
+      "Sheet: AmiBot_API\nRow: 2\nContent: Topic: Name. Answer: Ami.",
+      "Sheet: AmiBot_API\nRow: 3\nContent: Topic: Age. Answer: 29.",
+    ].join(KNOWLEDGE_RECORD_SEPARATOR)
+  );
+
+  assert.equal(chunks.length, 2);
+  assert.match(chunks[0], /Topic: Name/);
+  assert.match(chunks[1], /Topic: Age/);
 });
 
 test("scoreKnowledgeChunks ranks matching chunks above unrelated chunks", () => {

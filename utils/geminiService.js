@@ -113,20 +113,29 @@ function createGeminiError(message, status = 502, details = {}) {
   return error;
 }
 
-async function generateGeminiText(prompt, { env = process.env, timeoutMs = 20000 } = {}) {
+async function generateGeminiText(
+  prompt,
+  { env = process.env, timeoutMs = 20000, generationConfig = null } = {}
+) {
   const apiKey = getGeminiApiKey(env);
 
   if (!apiKey) {
     throw createGeminiError("Gemini API is not configured", 503);
   }
 
-  const postData = JSON.stringify({
+  const requestBody = {
     contents: [
       {
         parts: [{ text: prompt }],
       },
     ],
-  });
+  };
+
+  if (generationConfig && typeof generationConfig === "object") {
+    requestBody.generationConfig = generationConfig;
+  }
+
+  const postData = JSON.stringify(requestBody);
 
   const models = getGeminiModels(env);
   let lastFailure = null;
