@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   chunkText,
+  getDirectAmiBotReply,
   normalizeQuestion,
   normalizeSearchTokens,
   parseStructuredAnswer,
@@ -17,6 +18,19 @@ test("normalizeSearchTokens removes filler words and keeps useful unique tokens"
     normalizeSearchTokens("Tell me about AmiBot projects and AmiBot skills"),
     ["amibot", "projects", "skills"]
   );
+});
+
+test("getDirectAmiBotReply handles casual chat without requiring knowledge", () => {
+  const reply = getDirectAmiBotReply("Hi");
+
+  assert.equal(reply.type, "greeting");
+  assert.equal(
+    reply.answer,
+    "Hi! I am AmiBot. Ask me anything from the uploaded AmiBot knowledge."
+  );
+  assert.match(reply.knowledgeQuery, /hello/);
+
+  assert.equal(getDirectAmiBotReply("How does AmiBot use knowledge?"), null);
 });
 
 test("chunkText splits long text into bounded chunks", () => {

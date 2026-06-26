@@ -2,6 +2,20 @@ const { escapeRegExp } = require("./security");
 
 const DEFAULT_CHUNK_CHARS = 1800;
 const DEFAULT_CHUNK_OVERLAP = 220;
+const DIRECT_REPLIES = {
+  greeting: {
+    answer: "Hi! I am AmiBot. Ask me anything from the uploaded AmiBot knowledge.",
+    knowledgeQuery: "hello greeting hi hey namaste amibot",
+  },
+  thanks: {
+    answer: "You're welcome! Ask me whenever you need something from the uploaded AmiBot knowledge.",
+    knowledgeQuery: "thanks thank you welcome amibot",
+  },
+  farewell: {
+    answer: "Bye! I will be here when you want to ask about the uploaded AmiBot knowledge.",
+    knowledgeQuery: "bye goodbye farewell amibot",
+  },
+};
 
 const STOP_WORDS = new Set([
   "about",
@@ -63,6 +77,38 @@ function normalizeQuestion(value = "") {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .slice(0, 4000);
+}
+
+function normalizeCasualMessage(value = "") {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function getDirectAmiBotReply(query = "") {
+  const normalized = normalizeCasualMessage(query);
+  if (!normalized) return null;
+
+  const greetingPattern =
+    /^(hi+|hello+|hey+|heya|hiya|yo|namaste|good (morning|afternoon|evening))( there| amibot| ami| amiverse)?$/;
+  const thanksPattern = /^(thanks|thank you|thankyou|thx|ty)( amibot| ami)?$/;
+  const farewellPattern = /^(bye|goodbye|see you|see ya|talk to you later)( amibot| ami)?$/;
+
+  if (greetingPattern.test(normalized)) {
+    return { type: "greeting", ...DIRECT_REPLIES.greeting };
+  }
+
+  if (thanksPattern.test(normalized)) {
+    return { type: "thanks", ...DIRECT_REPLIES.thanks };
+  }
+
+  if (farewellPattern.test(normalized)) {
+    return { type: "farewell", ...DIRECT_REPLIES.farewell };
+  }
+
+  return null;
 }
 
 function normalizeSearchTokens(query = "", { maxTokens = 12 } = {}) {
@@ -220,6 +266,7 @@ function parseStructuredAnswer(raw = "") {
 module.exports = {
   chunkText,
   formatKnowledgeContext,
+  getDirectAmiBotReply,
   makeTokenRegex,
   normalizeQuestion,
   normalizeSearchTokens,
