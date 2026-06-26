@@ -2,9 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   generateGeminiContent,
+  extractGeminiText,
   getGeminiApiKey,
   getGeminiModels,
+  getPromptFromRequestBody,
   isRetryableGeminiStatus,
+  shouldTryNextGeminiModel,
 } = require("../controllers/geminiController");
 
 function mockFetchResponse(status, data) {
@@ -82,11 +85,80 @@ test("Gemini API key accepts common Google env names", () => {
   );
 });
 
+test("Gemini API key accepts additional deployment aliases", () => {
+  assert.equal(
+    getGeminiApiKey({
+      GOOGLE_GEMINI_API_KEY: " google-gemini-key ",
+    }),
+    "google-gemini-key"
+  );
+
+  assert.equal(
+    getGeminiApiKey({
+      GEMINI_KEY: " gemini-key ",
+    }),
+    "gemini-key"
+  );
+});
+
+test("Gemini request body accepts common prompt field names", () => {
+  assert.equal(getPromptFromRequestBody({ prompt: " Say ok " }), "Say ok");
+  assert.equal(getPromptFromRequestBody({ message: "Hello" }), "Hello");
+  assert.equal(getPromptFromRequestBody({ text: "Hi" }), "Hi");
+  assert.equal(getPromptFromRequestBody({ query: "Question" }), "Question");
+  assert.equal(getPromptFromRequestBody({ prompt: "   ", message: "Fallback" }), "Fallback");
+});
+
+test("Gemini response text is extracted from all text parts", () => {
+  assert.equal(
+    extractGeminiText({
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: "Hello" },
+              { inlineData: { mimeType: "image/png" } },
+              { text: " world" },
+            ],
+          },
+        },
+      ],
+    }),
+    "Hello world"
+  );
+});
+
 test("Gemini retryable statuses cover temporary upstream failures", () => {
   assert.equal(isRetryableGeminiStatus(429), true);
   assert.equal(isRetryableGeminiStatus(503), true);
   assert.equal(isRetryableGeminiStatus(400), false);
   assert.equal(isRetryableGeminiStatus(401), false);
+});
+
+test("Gemini model-selection errors try the next fallback model", () => {
+  assert.equal(
+    shouldTryNextGeminiModel(404, {
+      error: {
+        message:
+          "models/gemini-old is not found for API version v1beta, or is not supported for generateContent.",
+      },
+    }),
+    true
+  );
+
+  assert.equal(
+    shouldTryNextGeminiModel(400, {
+      error: { message: "models/gemini-old is not supported for generateContent" },
+    }),
+    true
+  );
+
+  assert.equal(
+    shouldTryNextGeminiModel(400, {
+      error: { message: "API key not valid. Please pass a valid API key." },
+    }),
+    false
+  );
 });
 
 test("generateGeminiContent falls back when configured Gemini model is unavailable", async () => {
@@ -132,6 +204,62 @@ test("generateGeminiContent falls back when configured Gemini model is unavailab
     assert.match(calls[0].url, /gemini-flash-latest:generateContent$/);
     assert.match(calls[1].url, /gemini-flash-lite-latest:generateContent$/);
     assert.equal(calls[0].options.headers["x-goog-api-key"], "test-key");
+  } finally {
+    global.fetch = originalFetch;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+
+    if (originalGeminiModel === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = originalGeminiModel;
+
+    if (originalFallbackModels === undefined) delete process.env.GEMINI_FALLBACK_MODELS;
+    else process.env.GEMINI_FALLBACK_MODELS = originalFallbackModels;
+  }
+});
+
+test("generateGeminiContent falls back when configured Gemini model is not found", async () => {
+  const originalFetch = global.fetch;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalGeminiModel = process.env.GEMINI_MODEL;
+  const originalFallbackModels = process.env.GEMINI_FALLBACK_MODELS;
+  const calls = [];
+
+  process.env.GEMINI_API_KEY = "test-key";
+  process.env.GEMINI_MODEL = "gemini-old";
+  process.env.GEMINI_FALLBACK_MODELS = "gemini-2.5-flash";
+
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+
+    if (calls.length === 1) {
+      return mockFetchResponse(404, {
+        error: {
+          message:
+            "models/gemini-old is not found for API version v1beta, or is not supported for generateContent.",
+        },
+      });
+    }
+
+    return mockFetchResponse(200, {
+      candidates: [
+        {
+          content: {
+            parts: [{ text: "Ok" }],
+          },
+        },
+      ],
+    });
+  };
+
+  try {
+    const res = mockRes();
+    await generateGeminiContent({ body: { message: "Say ok" } }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, { response: "Ok" });
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].url, /gemini-old:generateContent$/);
+    assert.match(calls[1].url, /gemini-2\.5-flash:generateContent$/);
   } finally {
     global.fetch = originalFetch;
     if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;

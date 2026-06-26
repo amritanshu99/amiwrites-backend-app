@@ -9,8 +9,11 @@ const DEFAULT_FALLBACK_MODELS = [
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_API_KEY_ENV_KEYS = [
   "GEMINI_API_KEY",
+  "GEMINI_KEY",
   "GOOGLE_API_KEY",
+  "GOOGLE_GEMINI_API_KEY",
   "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GENERATIVE_LANGUAGE_API_KEY",
 ];
 
 function normalizeGeminiModel(model = "") {
@@ -51,6 +54,22 @@ function getGeminiErrorMessage(data) {
   return data?.error?.message || data?.message || data?.text || "Unknown error from Gemini API";
 }
 
+function isModelSelectionError(status, data) {
+  if (status === 404) return true;
+
+  if (status !== 400) return false;
+
+  const message = getGeminiErrorMessage(data).toLowerCase();
+  return (
+    /models?\//.test(message) &&
+    /(not found|not supported|unsupported|not available|invalid model|unknown model)/.test(message)
+  );
+}
+
+function shouldTryNextGeminiModel(status, data) {
+  return isRetryableGeminiStatus(status) || isModelSelectionError(status, data);
+}
+
 function parseJsonOrText(text) {
   if (!text) return null;
 
@@ -78,9 +97,29 @@ async function callGeminiModel({ model, apiKey, postData }) {
   return { response, data: parseJsonOrText(text), text };
 }
 
+function getPromptFromRequestBody(body = {}) {
+  for (const field of ["prompt", "message", "text", "query"]) {
+    if (typeof body[field] === "string" && body[field].trim()) {
+      return body[field].trim();
+    }
+  }
+
+  return "";
+}
+
+function extractGeminiText(data) {
+  const parts = data?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return "";
+
+  return parts
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
+    .join("")
+    .trim();
+}
+
 async function generateGeminiContent(req, res) {
   try {
-    const prompt = typeof req.body.prompt === "string" ? req.body.prompt.trim() : "";
+    const prompt = getPromptFromRequestBody(req.body);
     const apiKey = getGeminiApiKey();
 
     if (!prompt) {
@@ -124,7 +163,7 @@ async function generateGeminiContent(req, res) {
       const { response, data } = result;
 
       if (response.ok) {
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const text = extractGeminiText(data);
         if (text) return res.json({ response: text });
 
         lastFailure = {
@@ -139,7 +178,7 @@ async function generateGeminiContent(req, res) {
       lastFailure = { status: response.status, data, model };
       console.error(`Gemini model ${model} failed with ${response.status}: ${getGeminiErrorMessage(data)}`);
 
-      if (!isRetryableGeminiStatus(response.status)) {
+      if (!shouldTryNextGeminiModel(response.status, data)) {
         break;
       }
     }
@@ -157,5 +196,8 @@ module.exports = {
   generateGeminiContent,
   getGeminiApiKey,
   getGeminiModels,
+  getPromptFromRequestBody,
+  extractGeminiText,
+  shouldTryNextGeminiModel,
   isRetryableGeminiStatus,
 };
