@@ -13,6 +13,7 @@ const { generateGeminiText } = require("../utils/geminiService");
 const {
   chunkText,
   formatKnowledgeContext,
+  getDirectAmiBotReply,
   makeTokenRegex,
   normalizeQuestion,
   normalizeSearchTokens,
@@ -124,7 +125,7 @@ function rowsToSheetText(sheetName, rows = []) {
     : [];
   const hasHeader = headerRow.some(Boolean);
   const dataRows = hasHeader ? rows.slice(1) : rows;
-  const lines = [`Sheet: ${sheetName || "Sheet 1"}`];
+  const lines = [];
 
   dataRows.forEach((row, rowIndex) => {
     const values = Array.isArray(row) ? row.map(formatCellValue) : [];
@@ -145,7 +146,7 @@ function rowsToSheetText(sheetName, rows = []) {
     }
   });
 
-  return lines.join("\n");
+  return [`Sheet: ${sheetName || "Sheet 1"}`, ...lines].join("\n\n");
 }
 
 function normalizeExcelSheets(parsedSheets) {
@@ -165,6 +166,30 @@ function normalizeExcelSheets(parsedSheets) {
   return [];
 }
 
+async function readWorkbookSheets(input) {
+  const parsedSheets = await readExcelFile(input, { getSheets: true });
+  const normalizedSheets = normalizeExcelSheets(parsedSheets);
+
+  if (normalizedSheets.length) return normalizedSheets;
+
+  if (
+    Array.isArray(parsedSheets) &&
+    parsedSheets.every((sheet) => typeof sheet?.name === "string" || typeof sheet?.sheet === "string")
+  ) {
+    const loadedSheets = [];
+
+    for (const sheet of parsedSheets) {
+      const sheetName = sheet.name || sheet.sheet;
+      const rows = await readExcelFile(input, { sheet: sheetName });
+      loadedSheets.push({ sheet: sheetName, data: rows });
+    }
+
+    return normalizeExcelSheets(loadedSheets);
+  }
+
+  return [];
+}
+
 async function extractPdfText(file) {
   const parsed = await pdfParse(file.buffer);
   return String(parsed?.text || "").trim();
@@ -174,9 +199,17 @@ async function extractExcelText(file) {
   let sheets = [];
 
   try {
-    sheets = normalizeExcelSheets(await readExcelFile(file.buffer));
+    sheets = await readWorkbookSheets(file.buffer);
   } catch {
     sheets = [];
+  }
+
+  if (!sheets.length) {
+    try {
+      sheets = normalizeExcelSheets(await readExcelFile(file.buffer));
+    } catch {
+      sheets = [];
+    }
   }
 
   if (!sheets.length) {
@@ -460,6 +493,47 @@ async function answerFromUnknownData(req, res, query) {
   );
 }
 
+async function answerFromDirectReply(req, res, directReply) {
+  await saveChatMessage(req.user, "bot", directReply.answer, {
+    answeredFromKnowledge: false,
+    answerSource: "direct",
+    interactionType: directReply.type,
+  });
+
+  return res.status(200).json(
+    buildChatResponse({
+      answer: directReply.answer,
+      answeredFromKnowledge: false,
+    })
+  );
+}
+
+async function answerFromKnowledge(req, res, query, relevantChunks) {
+  const context = formatKnowledgeContext(relevantChunks);
+  const prompt = buildGroundedPrompt({ query, context });
+  const { text } = await generateGeminiText(prompt);
+  const structuredAnswer = parseStructuredAnswer(text);
+  const answer = structuredAnswer?.answer || text.trim();
+  const answerable = structuredAnswer ? structuredAnswer.answerable : Boolean(answer);
+
+  if (!answerable) return null;
+
+  const sources = getSourcesFromChunks(relevantChunks);
+
+  await saveChatMessage(req.user, "bot", answer, {
+    answeredFromKnowledge: true,
+    sources,
+  });
+
+  return res.status(200).json(
+    buildChatResponse({
+      answer,
+      answeredFromKnowledge: true,
+      sources,
+    })
+  );
+}
+
 async function askAmibot(req, res) {
   try {
     const query = typeof req.body.query === "string" ? req.body.query.trim() : "";
@@ -474,37 +548,29 @@ async function askAmibot(req, res) {
 
     await saveChatMessage(req.user, "user", query);
 
+    const directReply = getDirectAmiBotReply(query);
+    if (directReply) {
+      const directReplyChunks = directReply.knowledgeQuery
+        ? await findRelevantKnowledge(directReply.knowledgeQuery)
+        : [];
+      if (directReplyChunks.length) {
+        const knowledgeResponse = await answerFromKnowledge(req, res, query, directReplyChunks);
+        if (knowledgeResponse) return knowledgeResponse;
+      }
+
+      return answerFromDirectReply(req, res, directReply);
+    }
+
     const relevantChunks = await findRelevantKnowledge(query);
 
     if (!relevantChunks.length) {
       return answerFromUnknownData(req, res, query);
     }
 
-    const context = formatKnowledgeContext(relevantChunks);
-    const prompt = buildGroundedPrompt({ query, context });
-    const { text } = await generateGeminiText(prompt);
-    const structuredAnswer = parseStructuredAnswer(text);
-    const answer = structuredAnswer?.answer || text.trim();
-    const answerable = structuredAnswer ? structuredAnswer.answerable : Boolean(answer);
+    const knowledgeResponse = await answerFromKnowledge(req, res, query, relevantChunks);
+    if (knowledgeResponse) return knowledgeResponse;
 
-    if (!answerable) {
-      return answerFromUnknownData(req, res, query);
-    }
-
-    const sources = getSourcesFromChunks(relevantChunks);
-
-    await saveChatMessage(req.user, "bot", answer, {
-      answeredFromKnowledge: true,
-      sources,
-    });
-
-    return res.status(200).json(
-      buildChatResponse({
-        answer,
-        answeredFromKnowledge: true,
-        sources,
-      })
-    );
+    return answerFromUnknownData(req, res, query);
   } catch (err) {
     console.error("AmiBot request error:", err.message || err);
     const status = Number.isInteger(err.status) ? err.status : 500;
