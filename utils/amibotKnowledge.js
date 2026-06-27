@@ -3,6 +3,7 @@ const { escapeRegExp } = require("./security");
 const DEFAULT_CHUNK_CHARS = 1800;
 const DEFAULT_CHUNK_OVERLAP = 220;
 const KNOWLEDGE_RECORD_SEPARATOR = "\n\n--- AMIBOT KNOWLEDGE RECORD ---\n\n";
+const STRUCTURED_CONTENT_FIELDS = ["Topic", "Answer", "Search phrases", "Tags", "Category"];
 const DIRECT_REPLIES = {
   greeting: {
     answer: "Hi! I am AmiBot. Ask me anything from the uploaded AmiBot knowledge.",
@@ -165,6 +166,102 @@ function normalizeSearchText(value = "") {
     .replace(/\s+/g, " ");
 }
 
+function formatCellValue(value) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value).trim();
+}
+
+function normalizeHeaderLabel(value = "") {
+  return String(value)
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function parseStructuredContent(value = "") {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return {};
+
+  const labelPattern = /\b(Topic|Answer|Search phrases|Tags|Category)\s*:/gi;
+  const matches = [...text.matchAll(labelPattern)];
+  if (!matches.length) return {};
+
+  const fields = {};
+
+  matches.forEach((match, index) => {
+    const label = STRUCTURED_CONTENT_FIELDS.find(
+      (field) => field.toLowerCase() === match[1].toLowerCase()
+    );
+    if (!label) return;
+
+    const valueStart = match.index + match[0].length;
+    const valueEnd = matches[index + 1]?.index ?? text.length;
+    const fieldValue = text
+      .slice(valueStart, valueEnd)
+      .trim()
+      .replace(/^\.+\s*/, "")
+      .replace(/\s+/g, " ");
+
+    if (fieldValue) fields[label] = fieldValue;
+  });
+
+  return fields;
+}
+
+function rowsToSheetText(sheetName, rows = []) {
+  const headerRow = Array.isArray(rows[0])
+    ? rows[0].map(formatCellValue)
+    : [];
+  const hasHeader = headerRow.some(Boolean);
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const records = [];
+
+  dataRows.forEach((row, rowIndex) => {
+    const values = Array.isArray(row) ? row.map(formatCellValue) : [];
+    if (!values.some(Boolean)) return;
+
+    const excelRowNumber = hasHeader ? rowIndex + 2 : rowIndex + 1;
+    const lines = [
+      `Sheet: ${sheetName || "Sheet 1"}`,
+      `Row: ${excelRowNumber}`,
+    ];
+    const addedStructuredLabels = new Set();
+
+    values.forEach((value, cellIndex) => {
+      if (!value) return;
+
+      const rawLabel = hasHeader && headerRow[cellIndex]
+        ? headerRow[cellIndex]
+        : `Column ${cellIndex + 1}`;
+      const label = normalizeHeaderLabel(rawLabel);
+      const structuredFields = label.toLowerCase() === "content"
+        ? parseStructuredContent(value)
+        : {};
+      const structuredEntries = STRUCTURED_CONTENT_FIELDS
+        .map((field) => [field, structuredFields[field]])
+        .filter(([, fieldValue]) => fieldValue);
+
+      if (structuredEntries.length) {
+        structuredEntries.forEach(([field, fieldValue]) => {
+          addedStructuredLabels.add(field.toLowerCase());
+          lines.push(`${field}: ${fieldValue}`);
+        });
+        return;
+      }
+
+      if (addedStructuredLabels.has(label.toLowerCase())) return;
+      lines.push(`${label}: ${value}`);
+    });
+
+    if (lines.length > 2) records.push(lines.join("\n"));
+  });
+
+  return records.join(KNOWLEDGE_RECORD_SEPARATOR);
+}
+
 function getDirectAmiBotReply(query = "") {
   const normalized = normalizeCasualMessage(query);
   if (!normalized) return null;
@@ -269,15 +366,23 @@ function scoreChunkAgainstTokens(chunkText = "", tokens = []) {
   return score;
 }
 
-function scoreKnowledgeChunks(chunks = [], query = "") {
+function scoreKnowledgeChunks(chunks = [], query = "", options = {}) {
   const tokens = normalizeSearchTokens(query);
+  const supplementalTokens = normalizeSearchTokens(options.supplementalQuery || "", {
+    maxTokens: options.maxSupplementalTokens || 18,
+  }).filter((token) => !tokens.includes(token));
+  const primaryWeight = Number.isFinite(options.primaryWeight) ? options.primaryWeight : 1;
+  const supplementalWeight = Number.isFinite(options.supplementalWeight)
+    ? options.supplementalWeight
+    : 1;
 
   return chunks
     .map((chunk) => ({
       ...chunk,
       relevanceScore:
         Number(chunk.score || chunk.relevanceScore || 0) +
-        scoreChunkAgainstTokens(chunk.chunkText || "", tokens),
+        scoreChunkAgainstTokens(chunk.chunkText || "", tokens) * primaryWeight +
+        scoreChunkAgainstTokens(chunk.chunkText || "", supplementalTokens) * supplementalWeight,
     }))
     .filter((chunk) => chunk.relevanceScore > 0)
     .sort((a, b) => b.relevanceScore - a.relevanceScore);
@@ -404,7 +509,9 @@ module.exports = {
   makeTokenRegex,
   normalizeQuestion,
   normalizeSearchTokens,
+  parseStructuredContent,
   parseStructuredAnswer,
+  rowsToSheetText,
   scoreChunkAgainstTokens,
   scoreKnowledgeChunks,
 };

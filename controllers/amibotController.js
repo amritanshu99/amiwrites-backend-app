@@ -19,6 +19,7 @@ const {
   normalizeQuestion,
   normalizeSearchTokens,
   parseStructuredAnswer,
+  rowsToSheetText,
   scoreKnowledgeChunks,
 } = require("../utils/amibotKnowledge");
 const { clampPositiveInt, escapeHtml } = require("../utils/security");
@@ -28,6 +29,8 @@ const MAX_ADMIN_ANSWER_LENGTH = 12000;
 const DEFAULT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_CHUNKS_PER_UPLOAD = 300;
 const DEFAULT_AMIBOT_TEMPERATURE = 0.35;
+const DEFAULT_CONTEXT_MESSAGE_LIMIT = 8;
+const MAX_CONTEXT_CHARS = 3000;
 const UNKNOWN_GUEST_REPLY =
   "I do not have this answer in the uploaded AmiBot knowledge yet.";
 const UNKNOWN_USER_REPLY =
@@ -121,50 +124,6 @@ function handleAmiBotKnowledgeUpload(req, res, next) {
 
     return res.status(status).json({ error: err.message || "Unable to upload AmiBot knowledge" });
   });
-}
-
-function formatCellValue(value) {
-  if (value === null || value === undefined) return "";
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value).trim();
-}
-
-function rowsToSheetText(sheetName, rows = []) {
-  const headerRow = Array.isArray(rows[0])
-    ? rows[0].map(formatCellValue)
-    : [];
-  const hasHeader = headerRow.some(Boolean);
-  const dataRows = hasHeader ? rows.slice(1) : rows;
-  const records = [];
-
-  dataRows.forEach((row, rowIndex) => {
-    const values = Array.isArray(row) ? row.map(formatCellValue) : [];
-    if (!values.some(Boolean)) return;
-
-    const cells = values
-      .map((value, cellIndex) => {
-        if (!value) return "";
-        const label = hasHeader && headerRow[cellIndex]
-          ? headerRow[cellIndex]
-          : `Column ${cellIndex + 1}`;
-        return `${label}: ${value}`;
-      })
-      .filter(Boolean);
-
-    if (!cells.length) return;
-
-    const excelRowNumber = hasHeader ? rowIndex + 2 : rowIndex + 1;
-    records.push(
-      [
-        `Sheet: ${sheetName || "Sheet 1"}`,
-        `Row: ${excelRowNumber}`,
-        ...cells,
-      ].join("\n")
-    );
-  });
-
-  return records.join(KNOWLEDGE_RECORD_SEPARATOR);
 }
 
 function normalizeExcelSheets(parsedSheets) {
@@ -312,8 +271,11 @@ function uniqueChunks(chunks = []) {
   return unique;
 }
 
-async function findRelevantKnowledge(query, { limit = 8 } = {}) {
-  const tokens = normalizeSearchTokens(query, { maxTokens: 24 });
+async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" } = {}) {
+  const primaryTokens = normalizeSearchTokens(query, { maxTokens: 24 });
+  const supplementalTokens = normalizeSearchTokens(supplementalQuery, { maxTokens: 18 })
+    .filter((token) => !primaryTokens.includes(token));
+  const tokens = [...primaryTokens, ...supplementalTokens].slice(0, 32);
   if (!tokens.length) return [];
 
   const chunks = [];
@@ -346,10 +308,18 @@ async function findRelevantKnowledge(query, { limit = 8 } = {}) {
     }
   }
 
-  return scoreKnowledgeChunks(uniqueChunks(chunks), query).slice(0, limit);
+  return scoreKnowledgeChunks(uniqueChunks(chunks), query, {
+    supplementalQuery,
+    primaryWeight: 3,
+    supplementalWeight: 1,
+  }).slice(0, limit);
 }
 
-function buildGroundedPrompt({ query, context }) {
+function buildGroundedPrompt({ query, context, conversationContext = "" }) {
+  const recentConversation = conversationContext
+    ? `\nRecent conversation (use only to resolve follow-ups, pronouns, and references; answer the current question):\n${conversationContext}\n`
+    : "";
+
   return `
 You are AmiBot for AmiVerse.
 Answer the user's question using only the provided AmiBot knowledge context.
@@ -358,6 +328,7 @@ Choose the most relevant single knowledge record unless the question asks for a 
 When a matching record contains an "Answer:" field, use that field as the factual source.
 You may paraphrase the wording naturally, but preserve exact facts, names, dates, numbers, URLs, titles, and relationships.
 If the same question is asked again, vary the phrasing lightly while keeping the answer correct.
+For follow-up messages, use the recent conversation only to understand what the user means; do not repeat a previous answer unless asked.
 If the context does not contain the answer, return answerable as false.
 
 Return valid JSON only in this exact shape:
@@ -365,6 +336,7 @@ Return valid JSON only in this exact shape:
 
 If the answer is missing:
 {"answerable":false,"answer":"I do not have this answer in the uploaded AmiBot knowledge yet."}
+${recentConversation}
 
 Question:
 ${query}
@@ -389,6 +361,118 @@ function getSourcesFromChunks(chunks = []) {
   }
 
   return [...sourceMap.values()];
+}
+
+function normalizeConversationText(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 1200);
+}
+
+function getConversationSender(message = {}) {
+  const rawSender = String(message.sender || message.role || "").toLowerCase();
+
+  if (rawSender === "assistant" || rawSender === "bot" || rawSender === "amibot") {
+    return "bot";
+  }
+
+  if (rawSender === "admin") return "admin";
+  return "user";
+}
+
+function getConversationText(message = {}) {
+  return normalizeConversationText(
+    message.text ?? message.content ?? message.message ?? message.query ?? ""
+  );
+}
+
+function coerceConversationMessages(messages = [], currentQuery = "") {
+  if (!Array.isArray(messages)) return [];
+
+  const normalizedCurrentQuery = normalizeQuestion(currentQuery);
+  const coerced = messages
+    .map((message) => {
+      const text = getConversationText(message);
+      if (!text) return null;
+
+      return {
+        sender: getConversationSender(message),
+        text,
+      };
+    })
+    .filter(Boolean)
+    .slice(-DEFAULT_CONTEXT_MESSAGE_LIMIT);
+
+  const last = coerced[coerced.length - 1];
+  if (
+    last?.sender === "user" &&
+    normalizedCurrentQuery &&
+    normalizeQuestion(last.text) === normalizedCurrentQuery
+  ) {
+    coerced.pop();
+  }
+
+  return coerced;
+}
+
+function getBodyConversationMessages(req, currentQuery) {
+  const bodyMessages = Array.isArray(req.body?.history)
+    ? req.body.history
+    : Array.isArray(req.body?.messages)
+      ? req.body.messages
+      : [];
+
+  return coerceConversationMessages(bodyMessages, currentQuery);
+}
+
+async function getPersistedConversationMessages(req, currentQuery) {
+  const userId = req.user?.id || req.user?._id;
+  if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return [];
+
+  try {
+    const messages = await AmiBotChatMessage.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(DEFAULT_CONTEXT_MESSAGE_LIMIT + 2)
+      .lean();
+
+    return coerceConversationMessages(messages.reverse(), currentQuery);
+  } catch (error) {
+    console.error("AmiBot conversation context fetch failed:", error.message || error);
+    return [];
+  }
+}
+
+async function getConversationMessages(req, currentQuery) {
+  const bodyMessages = getBodyConversationMessages(req, currentQuery);
+  if (bodyMessages.length) return bodyMessages;
+
+  return getPersistedConversationMessages(req, currentQuery);
+}
+
+function formatConversationContext(messages = []) {
+  const lines = [];
+  let usedChars = 0;
+
+  for (const message of messages.slice(-DEFAULT_CONTEXT_MESSAGE_LIMIT)) {
+    const label = message.sender === "user" ? "User" : "AmiBot";
+    const line = `${label}: ${message.text}`;
+    if (usedChars + line.length > MAX_CONTEXT_CHARS && lines.length) break;
+
+    const available = Math.max(0, MAX_CONTEXT_CHARS - usedChars);
+    lines.push(line.slice(0, available));
+    usedChars += Math.min(line.length, available);
+  }
+
+  return lines.join("\n");
+}
+
+function buildSupplementalKnowledgeQuery(messages = []) {
+  return messages
+    .slice(-DEFAULT_CONTEXT_MESSAGE_LIMIT)
+    .map((message) => message.text)
+    .join("\n")
+    .slice(0, MAX_CONTEXT_CHARS);
 }
 
 async function saveChatMessage(user, sender, text, metadata = {}) {
@@ -532,9 +616,9 @@ async function answerFromDirectReply(req, res, directReply) {
   );
 }
 
-async function answerFromKnowledge(req, res, query, relevantChunks) {
+async function answerFromKnowledge(req, res, query, relevantChunks, { conversationContext = "" } = {}) {
   const context = formatKnowledgeContext(relevantChunks);
-  const prompt = buildGroundedPrompt({ query, context });
+  const prompt = buildGroundedPrompt({ query, context, conversationContext });
   const { text } = await generateGeminiText(prompt, {
     generationConfig: {
       temperature: getAmiBotTemperature(),
@@ -590,13 +674,18 @@ async function askAmibot(req, res) {
       return answerFromDirectReply(req, res, directReply);
     }
 
-    const relevantChunks = await findRelevantKnowledge(query);
+    const conversationMessages = await getConversationMessages(req, query);
+    const conversationContext = formatConversationContext(conversationMessages);
+    const supplementalQuery = buildSupplementalKnowledgeQuery(conversationMessages);
+    const relevantChunks = await findRelevantKnowledge(query, { supplementalQuery });
 
     if (!relevantChunks.length) {
       return answerFromUnknownData(req, res, query);
     }
 
-    const knowledgeResponse = await answerFromKnowledge(req, res, query, relevantChunks);
+    const knowledgeResponse = await answerFromKnowledge(req, res, query, relevantChunks, {
+      conversationContext,
+    });
     if (knowledgeResponse) return knowledgeResponse;
 
     return answerFromUnknownData(req, res, query);

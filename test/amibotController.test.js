@@ -83,3 +83,79 @@ test("askAmibot falls back to direct greetings without admin review", async () =
     AmiBotQuestion.findOne = originalQuestionFindOne;
   }
 });
+
+test("askAmibot includes recent body history when answering follow-up questions", async () => {
+  const controllerPath = require.resolve("../controllers/amibotController");
+  const geminiService = require("../utils/geminiService");
+  const originalGenerateGeminiText = geminiService.generateGeminiText;
+  const originalChunkFind = AmiBotKnowledgeChunk.find;
+  let capturedPrompt = "";
+
+  try {
+    delete require.cache[controllerPath];
+    geminiService.generateGeminiText = async (prompt) => {
+      capturedPrompt = prompt;
+      return {
+        text: JSON.stringify({
+          answerable: true,
+          answer: "Associate Consultant Technology at GlobalLogic.",
+        }),
+      };
+    };
+
+    AmiBotKnowledgeChunk.find = (criteria) => {
+      const isTextSearch = Boolean(criteria?.$text);
+      return {
+        sort() {
+          return this;
+        },
+        limit() {
+          return this;
+        },
+        lean: async () => (
+          isTextSearch
+            ? [
+              {
+                _id: "designation",
+                sourceId: "source-1",
+                sourceName: "AmiBot_API",
+                sourceType: "excel",
+                chunkIndex: 32,
+                chunkText:
+                  "Topic: Current Designation\nAnswer: Associate Consultant Technology at GlobalLogic.\nSearch phrases: designation, role in company, job title.",
+              },
+            ]
+            : []
+        ),
+      };
+    };
+
+    const { askAmibot: askAmibotWithMockedGemini } = require("../controllers/amibotController");
+    const res = mockRes();
+
+    await askAmibotWithMockedGemini(
+      {
+        body: {
+          query: "what about designation?",
+          history: [
+            { sender: "user", text: "Where do you work now?" },
+            { sender: "bot", text: "Currently working at GlobalLogic." },
+          ],
+        },
+      },
+      res
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.response, "Associate Consultant Technology at GlobalLogic.");
+    assert.equal(res.body.answeredFromKnowledge, true);
+    assert.match(capturedPrompt, /Recent conversation/);
+    assert.match(capturedPrompt, /Where do you work now\?/);
+    assert.match(capturedPrompt, /Question:\nwhat about designation\?/);
+  } finally {
+    geminiService.generateGeminiText = originalGenerateGeminiText;
+    AmiBotKnowledgeChunk.find = originalChunkFind;
+    delete require.cache[controllerPath];
+    require("../controllers/amibotController");
+  }
+});

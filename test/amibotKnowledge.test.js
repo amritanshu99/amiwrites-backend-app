@@ -7,7 +7,9 @@ const {
   getDirectAmiBotReply,
   normalizeQuestion,
   normalizeSearchTokens,
+  parseStructuredContent,
   parseStructuredAnswer,
+  rowsToSheetText,
   scoreKnowledgeChunks,
 } = require("../utils/amibotKnowledge");
 
@@ -69,6 +71,37 @@ test("chunkKnowledgeText keeps imported sheet records separate", () => {
   assert.match(chunks[1], /Topic: Age/);
 });
 
+test("rowsToSheetText expands AmiBot API content fields into searchable records", () => {
+  const text = rowsToSheetText("AmiBot_API", [
+    ["Document_ID", "Content"],
+    [
+      "AMI-033",
+      "Topic: Current Designation. Answer: Associate Consultant Technology at GlobalLogic. Search phrases: designation, role in company, job title. Tags: career, current-designation. Category: Career",
+    ],
+  ]);
+
+  assert.match(text, /Document ID: AMI-033/);
+  assert.match(text, /Topic: Current Designation\./);
+  assert.match(text, /Answer: Associate Consultant Technology at GlobalLogic\./);
+  assert.match(text, /Search phrases: designation, role in company, job title\./);
+  assert.doesNotMatch(text, /Content: Topic:/);
+});
+
+test("parseStructuredContent extracts fields from a single API-ready content cell", () => {
+  assert.deepEqual(
+    parseStructuredContent(
+      "Topic: Age. Answer: Currently 29. Search phrases: how old, your age. Tags: personal, age. Category: Personal"
+    ),
+    {
+      Topic: "Age.",
+      Answer: "Currently 29.",
+      "Search phrases": "how old, your age.",
+      Tags: "personal, age.",
+      Category: "Personal",
+    }
+  );
+});
+
 test("scoreKnowledgeChunks ranks matching chunks above unrelated chunks", () => {
   const scored = scoreKnowledgeChunks(
     [
@@ -86,6 +119,28 @@ test("scoreKnowledgeChunks ranks matching chunks above unrelated chunks", () => 
 
   assert.equal(scored[0]._id, "1");
   assert.equal(scored.length, 1);
+});
+
+test("scoreKnowledgeChunks uses supplemental context without overpowering the current query", () => {
+  const scored = scoreKnowledgeChunks(
+    [
+      {
+        _id: "company",
+        chunkText: "Topic: Current Organizations\nAnswer: Currently working at GlobalLogic.",
+      },
+      {
+        _id: "designation",
+        chunkText: "Topic: Current Designation\nAnswer: Associate Consultant Technology at GlobalLogic.",
+      },
+    ],
+    "What about designation?",
+    {
+      supplementalQuery: "Where do you work now? Currently working at GlobalLogic.",
+      primaryWeight: 3,
+    }
+  );
+
+  assert.equal(scored[0]._id, "designation");
 });
 
 test("parseStructuredAnswer accepts raw JSON and fenced JSON", () => {
