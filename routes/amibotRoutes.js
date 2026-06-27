@@ -2,6 +2,7 @@ const express = require("express");
 const {
   answerAdminQuestion,
   askAmibot,
+  backfillKnowledgeEmbeddings,
   clearAmiBotHistory,
   closeAdminQuestion,
   deleteKnowledgeSource,
@@ -34,6 +35,12 @@ router.post(
   requireAdmin,
   handleAmiBotKnowledgeUpload,
   uploadKnowledge
+);
+router.post(
+  "/admin/knowledge/embeddings/backfill",
+  authMiddleware,
+  requireAdmin,
+  backfillKnowledgeEmbeddings
 );
 router.delete("/admin/knowledge/:id", authMiddleware, requireAdmin, deleteKnowledgeSource);
 

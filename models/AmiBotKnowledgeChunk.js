@@ -17,6 +17,9 @@ const amiBotKnowledgeChunkSchema = new mongoose.Schema(
     },
     chunkIndex: { type: Number, required: true },
     chunkText: { type: String, required: true },
+    embedding: { type: [Number], default: undefined },
+    embeddingModel: { type: String, trim: true },
+    embeddedAt: { type: Date },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }
@@ -24,5 +27,6 @@ const amiBotKnowledgeChunkSchema = new mongoose.Schema(
 
 amiBotKnowledgeChunkSchema.index({ chunkText: "text", sourceName: "text" });
 amiBotKnowledgeChunkSchema.index({ sourceId: 1, chunkIndex: 1 }, { unique: true });
+amiBotKnowledgeChunkSchema.index({ embeddingModel: 1, embeddedAt: -1 });
 
 module.exports = mongoose.model("AmiBotKnowledgeChunk", amiBotKnowledgeChunkSchema);

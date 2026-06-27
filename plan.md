@@ -71,6 +71,10 @@
   - Optional multipart field: `sourceName`.
   - Supports `.pdf` and `.xlsx`.
 
+- `POST /api/amibot/admin/knowledge/embeddings/backfill`
+  - Admin only.
+  - Optional JSON/query `limit` controls the chunk batch size.
+
 - `DELETE /api/amibot/admin/knowledge/:id`
   - Admin only.
 
@@ -90,6 +94,9 @@ New AmiBot vars added to `.env.example`:
 - `AMIBOT_ADMIN_EMAIL=amritanshu0909@gmail.com`
 - `AMIBOT_UPLOAD_MAX_BYTES=10485760`
 - `AMIBOT_MAX_CHUNKS_PER_UPLOAD=300`
+- `AMIBOT_EMBEDDINGS_ENABLED=true`
+- `GEMINI_EMBEDDING_MODEL=gemini-embedding-2`
+- `GEMINI_EMBEDDING_DIMENSIONS=768`
 
 If `AMIBOT_ADMIN_EMAIL` is not set, AmiBot falls back to `CONTACT_TO_EMAIL`.
 
@@ -117,7 +124,7 @@ If `AMIBOT_ADMIN_EMAIL` is not set, AmiBot falls back to `CONTACT_TO_EMAIL`.
 
 - `.xlsx` is supported. Old `.xls` files should be saved/exported as `.xlsx` before upload.
 - PDF quality matters. Text-based PDFs work best; scanned image PDFs may need OCR before upload.
-- Current retrieval uses MongoDB text search plus token scoring. This is good for version 1; embeddings/vector search can improve accuracy later.
+- Current retrieval uses hybrid scoring: MongoDB text/token matches plus Gemini embeddings when chunk vectors are available. It falls back to text/token search when embeddings are disabled or unavailable.
 - The model prompt is strict: answer only from provided knowledge context, otherwise mark the answer as missing.
 - Admin auth still follows the existing username-based pattern. A future improvement would be adding a `role` field on users.
 

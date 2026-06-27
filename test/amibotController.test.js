@@ -25,10 +25,12 @@ test("askAmibot falls back to direct greetings without admin review", async () =
   const originalChunkFind = AmiBotKnowledgeChunk.find;
   const originalQuestionCreate = AmiBotQuestion.create;
   const originalQuestionFindOne = AmiBotQuestion.findOne;
+  const originalEmbeddingsEnabled = process.env.AMIBOT_EMBEDDINGS_ENABLED;
   const chatMessages = [];
   let knowledgeLookups = 0;
 
   try {
+    process.env.AMIBOT_EMBEDDINGS_ENABLED = "false";
     AmiBotChatMessage.create = async (payload) => {
       chatMessages.push(payload);
       return { _id: String(chatMessages.length), ...payload };
@@ -81,6 +83,8 @@ test("askAmibot falls back to direct greetings without admin review", async () =
     AmiBotKnowledgeChunk.find = originalChunkFind;
     AmiBotQuestion.create = originalQuestionCreate;
     AmiBotQuestion.findOne = originalQuestionFindOne;
+    if (originalEmbeddingsEnabled === undefined) delete process.env.AMIBOT_EMBEDDINGS_ENABLED;
+    else process.env.AMIBOT_EMBEDDINGS_ENABLED = originalEmbeddingsEnabled;
   }
 });
 
@@ -89,9 +93,11 @@ test("askAmibot includes recent body history when answering follow-up questions"
   const geminiService = require("../utils/geminiService");
   const originalGenerateGeminiText = geminiService.generateGeminiText;
   const originalChunkFind = AmiBotKnowledgeChunk.find;
+  const originalEmbeddingsEnabled = process.env.AMIBOT_EMBEDDINGS_ENABLED;
   let capturedPrompt = "";
 
   try {
+    process.env.AMIBOT_EMBEDDINGS_ENABLED = "false";
     delete require.cache[controllerPath];
     geminiService.generateGeminiText = async (prompt) => {
       capturedPrompt = prompt;
@@ -155,6 +161,79 @@ test("askAmibot includes recent body history when answering follow-up questions"
   } finally {
     geminiService.generateGeminiText = originalGenerateGeminiText;
     AmiBotKnowledgeChunk.find = originalChunkFind;
+    delete require.cache[controllerPath];
+    if (originalEmbeddingsEnabled === undefined) delete process.env.AMIBOT_EMBEDDINGS_ENABLED;
+    else process.env.AMIBOT_EMBEDDINGS_ENABLED = originalEmbeddingsEnabled;
+    require("../controllers/amibotController");
+  }
+});
+
+test("findRelevantKnowledge can use semantic candidates when keyword search misses", async () => {
+  const controllerPath = require.resolve("../controllers/amibotController");
+  const geminiService = require("../utils/geminiService");
+  const originalGenerateGeminiEmbedding = geminiService.generateGeminiEmbedding;
+  const originalChunkFind = AmiBotKnowledgeChunk.find;
+  const originalGeminiKey = process.env.GEMINI_API_KEY;
+  const originalEmbeddingsEnabled = process.env.AMIBOT_EMBEDDINGS_ENABLED;
+
+  try {
+    process.env.GEMINI_API_KEY = "test-key";
+    process.env.AMIBOT_EMBEDDINGS_ENABLED = "true";
+    delete require.cache[controllerPath];
+
+    geminiService.generateGeminiEmbedding = async () => ({
+      embedding: [1, 0],
+      model: "test-embedding",
+    });
+
+    AmiBotKnowledgeChunk.find = (criteria) => {
+      const isSemanticLookup = Boolean(criteria?.embedding);
+      return {
+        sort() {
+          return this;
+        },
+        limit() {
+          return this;
+        },
+        lean: async () => (
+          isSemanticLookup
+            ? [
+              {
+                _id: "career",
+                sourceId: "source-1",
+                sourceName: "AmiBot_API",
+                sourceType: "excel",
+                chunkIndex: 1,
+                chunkText: "Topic: Career\nAnswer: Associate Consultant Technology.",
+                embedding: [0.98, 0.1],
+              },
+              {
+                _id: "fitness",
+                sourceId: "source-1",
+                sourceName: "AmiBot_API",
+                sourceType: "excel",
+                chunkIndex: 2,
+                chunkText: "Topic: Fitness\nAnswer: Strength training.",
+                embedding: [0.1, 0.98],
+              },
+            ]
+            : []
+        ),
+      };
+    };
+
+    const { findRelevantKnowledge } = require("../controllers/amibotController");
+    const matches = await findRelevantKnowledge("occupation");
+
+    assert.equal(matches[0]._id, "career");
+    assert.ok(matches[0].semanticScore > 0.5);
+  } finally {
+    geminiService.generateGeminiEmbedding = originalGenerateGeminiEmbedding;
+    AmiBotKnowledgeChunk.find = originalChunkFind;
+    if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalGeminiKey;
+    if (originalEmbeddingsEnabled === undefined) delete process.env.AMIBOT_EMBEDDINGS_ENABLED;
+    else process.env.AMIBOT_EMBEDDINGS_ENABLED = originalEmbeddingsEnabled;
     delete require.cache[controllerPath];
     require("../controllers/amibotController");
   }

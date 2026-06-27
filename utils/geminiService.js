@@ -5,6 +5,8 @@ const DEFAULT_FALLBACK_MODELS = [
   "gemini-flash-lite-latest",
   "gemini-3.1-flash-lite",
 ];
+const DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-2";
+const DEFAULT_GEMINI_EMBEDDING_DIMENSIONS = 768;
 const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_API_KEY_ENV_KEYS = [
   "GEMINI_API_KEY",
@@ -34,6 +36,16 @@ function getGeminiModels(env = process.env) {
     .filter(Boolean);
 
   return uniqueModels([primaryModel, ...configuredFallbacks, ...DEFAULT_FALLBACK_MODELS]);
+}
+
+function getGeminiEmbeddingModel(env = process.env) {
+  return normalizeGeminiModel(env.GEMINI_EMBEDDING_MODEL || DEFAULT_GEMINI_EMBEDDING_MODEL);
+}
+
+function getGeminiEmbeddingDimensions(env = process.env) {
+  const configured = Number.parseInt(env.GEMINI_EMBEDDING_DIMENSIONS, 10);
+  if ([768, 1536, 3072].includes(configured)) return configured;
+  return DEFAULT_GEMINI_EMBEDDING_DIMENSIONS;
 }
 
 function getGeminiApiKey(env = process.env) {
@@ -79,9 +91,15 @@ function parseJsonOrText(text) {
   }
 }
 
-async function callGeminiModel({ model, apiKey, postData, timeoutMs = 20000 }) {
+async function callGeminiModel({
+  model,
+  apiKey,
+  postData,
+  timeoutMs = 20000,
+  action = "generateContent",
+}) {
   const { response, text } = await fetchText(
-    `${GEMINI_API_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
+    `${GEMINI_API_BASE_URL}/${encodeURIComponent(model)}:${action}`,
     {
       method: "POST",
       headers: {
@@ -106,11 +124,103 @@ function extractGeminiText(data) {
     .trim();
 }
 
+function extractGeminiEmbedding(data) {
+  const values =
+    data?.embedding?.values ||
+    data?.embeddings?.[0]?.values ||
+    data?.embeddings?.[0]?.embedding?.values;
+
+  if (!Array.isArray(values)) return [];
+
+  return values
+    .map((value) => (
+      value === null || value === undefined || value === "" ? NaN : Number(value)
+    ))
+    .filter((value) => Number.isFinite(value));
+}
+
 function createGeminiError(message, status = 502, details = {}) {
   const error = new Error(message);
   error.status = status;
   Object.assign(error, details);
   return error;
+}
+
+function isGeminiEmbedding2Model(model = "") {
+  return normalizeGeminiModel(model).startsWith("gemini-embedding-2");
+}
+
+function prepareEmbeddingText({ model, text, taskType, title }) {
+  const normalizedText = String(text || "").trim();
+  if (!isGeminiEmbedding2Model(model)) return normalizedText;
+
+  if (taskType === "RETRIEVAL_DOCUMENT") {
+    const normalizedTitle = String(title || "none").trim() || "none";
+    return `title: ${normalizedTitle} | text: ${normalizedText}`;
+  }
+
+  if (taskType === "QUESTION_ANSWERING") {
+    return `task: question answering | query: ${normalizedText}`;
+  }
+
+  if (taskType === "RETRIEVAL_QUERY") {
+    return `task: search result | query: ${normalizedText}`;
+  }
+
+  return normalizedText;
+}
+
+async function generateGeminiEmbedding(
+  text,
+  {
+    env = process.env,
+    timeoutMs = 15000,
+    taskType = "SEMANTIC_SIMILARITY",
+    title = "",
+  } = {}
+) {
+  const apiKey = getGeminiApiKey(env);
+
+  if (!apiKey) {
+    throw createGeminiError("Gemini API is not configured", 503);
+  }
+
+  const model = getGeminiEmbeddingModel(env);
+  const embeddingText = prepareEmbeddingText({ model, text, taskType, title });
+  const requestBody = {
+    content: {
+      parts: [{ text: embeddingText }],
+    },
+    output_dimensionality: getGeminiEmbeddingDimensions(env),
+  };
+
+  if (!isGeminiEmbedding2Model(model)) {
+    requestBody.taskType = taskType;
+    if (taskType === "RETRIEVAL_DOCUMENT" && title) requestBody.title = title;
+  }
+
+  const { response, data } = await callGeminiModel({
+    model,
+    apiKey,
+    postData: JSON.stringify(requestBody),
+    timeoutMs,
+    action: "embedContent",
+  });
+
+  if (!response.ok) {
+    throw createGeminiError(
+      getGeminiErrorMessage(data),
+      response.status || 502,
+      { model, data }
+    );
+  }
+
+  const embedding = extractGeminiEmbedding(data);
+  if (!embedding.length) {
+    throw createGeminiError("Gemini returned an empty embedding", 502, { model, data });
+  }
+
+  return { embedding, model, data };
 }
 
 async function generateGeminiText(
@@ -187,9 +297,13 @@ async function generateGeminiText(
 
 module.exports = {
   callGeminiModel,
+  extractGeminiEmbedding,
   extractGeminiText,
+  generateGeminiEmbedding,
   generateGeminiText,
   getGeminiApiKey,
+  getGeminiEmbeddingDimensions,
+  getGeminiEmbeddingModel,
   getGeminiErrorMessage,
   getGeminiModels,
   isRetryableGeminiStatus,

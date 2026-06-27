@@ -366,6 +366,38 @@ function scoreChunkAgainstTokens(chunkText = "", tokens = []) {
   return score;
 }
 
+function normalizeEmbeddingVector(values = []) {
+  if (!Array.isArray(values)) return [];
+
+  return values
+    .map((value) => (
+      value === null || value === undefined || value === "" ? NaN : Number(value)
+    ))
+    .filter((value) => Number.isFinite(value));
+}
+
+function cosineSimilarity(left = [], right = []) {
+  const a = normalizeEmbeddingVector(left);
+  const b = normalizeEmbeddingVector(right);
+  const length = Math.min(a.length, b.length);
+
+  if (!length) return 0;
+
+  let dot = 0;
+  let leftMagnitude = 0;
+  let rightMagnitude = 0;
+
+  for (let index = 0; index < length; index += 1) {
+    dot += a[index] * b[index];
+    leftMagnitude += a[index] * a[index];
+    rightMagnitude += b[index] * b[index];
+  }
+
+  if (!leftMagnitude || !rightMagnitude) return 0;
+
+  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+}
+
 function scoreKnowledgeChunks(chunks = [], query = "", options = {}) {
   const tokens = normalizeSearchTokens(query);
   const supplementalTokens = normalizeSearchTokens(options.supplementalQuery || "", {
@@ -375,16 +407,41 @@ function scoreKnowledgeChunks(chunks = [], query = "", options = {}) {
   const supplementalWeight = Number.isFinite(options.supplementalWeight)
     ? options.supplementalWeight
     : 1;
+  const semanticQueryEmbedding = normalizeEmbeddingVector(options.semanticQueryEmbedding);
+  const semanticWeight = Number.isFinite(options.semanticWeight) ? options.semanticWeight : 0;
+  const minSemanticScore = Number.isFinite(options.minSemanticScore)
+    ? options.minSemanticScore
+    : 0.35;
 
   return chunks
-    .map((chunk) => ({
-      ...chunk,
-      relevanceScore:
-        Number(chunk.score || chunk.relevanceScore || 0) +
+    .map((chunk) => {
+      const baseScore = Number(chunk.score || chunk.relevanceScore || 0);
+      const keywordScore =
         scoreChunkAgainstTokens(chunk.chunkText || "", tokens) * primaryWeight +
-        scoreChunkAgainstTokens(chunk.chunkText || "", supplementalTokens) * supplementalWeight,
-    }))
-    .filter((chunk) => chunk.relevanceScore > 0)
+        scoreChunkAgainstTokens(chunk.chunkText || "", supplementalTokens) * supplementalWeight;
+      const semanticScore = semanticQueryEmbedding.length
+        ? cosineSimilarity(semanticQueryEmbedding, chunk.embedding)
+        : 0;
+      const weightedSemanticScore = semanticScore >= minSemanticScore
+        ? semanticScore * semanticWeight
+        : 0;
+
+      return {
+        ...chunk,
+        keywordScore,
+        semanticScore,
+        relevanceScore: baseScore + keywordScore + weightedSemanticScore,
+      };
+    })
+    .filter((chunk) => (
+      chunk.relevanceScore > 0 &&
+      (
+        !semanticQueryEmbedding.length ||
+        chunk.keywordScore > 0 ||
+        Number(chunk.score || 0) > 0 ||
+        chunk.semanticScore >= minSemanticScore
+      )
+    ))
     .sort((a, b) => b.relevanceScore - a.relevanceScore);
 }
 
@@ -506,7 +563,9 @@ module.exports = {
   chunkText,
   formatKnowledgeContext,
   getDirectAmiBotReply,
+  cosineSimilarity,
   makeTokenRegex,
+  normalizeEmbeddingVector,
   normalizeQuestion,
   normalizeSearchTokens,
   parseStructuredContent,

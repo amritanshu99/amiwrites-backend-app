@@ -4,8 +4,10 @@ const {
   KNOWLEDGE_RECORD_SEPARATOR,
   chunkKnowledgeText,
   chunkText,
+  cosineSimilarity,
   getDirectAmiBotReply,
   normalizeQuestion,
+  normalizeEmbeddingVector,
   normalizeSearchTokens,
   parseStructuredContent,
   parseStructuredAnswer,
@@ -141,6 +143,38 @@ test("scoreKnowledgeChunks uses supplemental context without overpowering the cu
   );
 
   assert.equal(scored[0]._id, "designation");
+});
+
+test("scoreKnowledgeChunks can rank chunks by semantic similarity", () => {
+  const scored = scoreKnowledgeChunks(
+    [
+      {
+        _id: "career",
+        chunkText: "Topic: Work\nAnswer: Associate Consultant Technology.",
+        embedding: [0.98, 0.1, 0],
+      },
+      {
+        _id: "fitness",
+        chunkText: "Topic: Fitness\nAnswer: Running and strength training.",
+        embedding: [0.1, 0.98, 0],
+      },
+    ],
+    "occupation",
+    {
+      semanticQueryEmbedding: [1, 0, 0],
+      semanticWeight: 10,
+      minSemanticScore: 0.5,
+    }
+  );
+
+  assert.equal(scored[0]._id, "career");
+  assert.ok(scored[0].semanticScore > scored[1]?.semanticScore || scored.length === 1);
+});
+
+test("cosineSimilarity normalizes numeric embedding values", () => {
+  assert.deepEqual(normalizeEmbeddingVector(["1", 2, "bad", null]), [1, 2]);
+  assert.equal(cosineSimilarity([1, 0], [1, 0]), 1);
+  assert.equal(cosineSimilarity([1, 0], [0, 1]), 0);
 });
 
 test("parseStructuredAnswer accepts raw JSON and fenced JSON", () => {

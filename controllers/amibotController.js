@@ -9,7 +9,11 @@ const AmiBotKnowledgeChunk = require("../models/AmiBotKnowledgeChunk");
 const AmiBotKnowledgeSource = require("../models/AmiBotKnowledgeSource");
 const AmiBotQuestion = require("../models/AmiBotQuestion");
 const User = require("../models/Users");
-const { generateGeminiText } = require("../utils/geminiService");
+const {
+  generateGeminiEmbedding,
+  generateGeminiText,
+  getGeminiApiKey,
+} = require("../utils/geminiService");
 const {
   KNOWLEDGE_RECORD_SEPARATOR,
   chunkKnowledgeText,
@@ -29,6 +33,11 @@ const MAX_ADMIN_ANSWER_LENGTH = 12000;
 const DEFAULT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_CHUNKS_PER_UPLOAD = 300;
 const DEFAULT_AMIBOT_TEMPERATURE = 0.35;
+const DEFAULT_EMBEDDING_CONCURRENCY = 2;
+const DEFAULT_SEMANTIC_CANDIDATE_LIMIT = 1200;
+const DEFAULT_SEMANTIC_MIN_SCORE = 0.35;
+const DEFAULT_SEMANTIC_WEIGHT = 10;
+const DEFAULT_EMBEDDING_TIMEOUT_MS = 15000;
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 8;
 const MAX_CONTEXT_CHARS = 3000;
 const UNKNOWN_GUEST_REPLY =
@@ -55,6 +64,62 @@ function getAmiBotTemperature() {
   }
 
   return DEFAULT_AMIBOT_TEMPERATURE;
+}
+
+function envFlagDisabled(value) {
+  return ["0", "false", "no", "off"].includes(String(value || "").trim().toLowerCase());
+}
+
+function getPositiveIntEnv(name, defaultValue, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const configured = Number.parseInt(process.env[name], 10);
+  if (!Number.isFinite(configured)) return defaultValue;
+  return Math.min(max, Math.max(min, configured));
+}
+
+function getFiniteFloatEnv(name, defaultValue, { min = -Infinity, max = Infinity } = {}) {
+  const configured = Number.parseFloat(process.env[name]);
+  if (!Number.isFinite(configured)) return defaultValue;
+  return Math.min(max, Math.max(min, configured));
+}
+
+function getAmiBotEmbeddingsEnabled() {
+  if (envFlagDisabled(process.env.AMIBOT_EMBEDDINGS_ENABLED)) return false;
+  return Boolean(getGeminiApiKey());
+}
+
+function getEmbeddingConcurrency() {
+  return getPositiveIntEnv("AMIBOT_EMBEDDING_CONCURRENCY", DEFAULT_EMBEDDING_CONCURRENCY, {
+    min: 1,
+    max: 6,
+  });
+}
+
+function getEmbeddingTimeoutMs() {
+  return getPositiveIntEnv("AMIBOT_EMBEDDING_TIMEOUT_MS", DEFAULT_EMBEDDING_TIMEOUT_MS, {
+    min: 1000,
+    max: 60000,
+  });
+}
+
+function getSemanticCandidateLimit() {
+  return getPositiveIntEnv("AMIBOT_SEMANTIC_CANDIDATE_LIMIT", DEFAULT_SEMANTIC_CANDIDATE_LIMIT, {
+    min: 50,
+    max: 5000,
+  });
+}
+
+function getSemanticMinScore() {
+  return getFiniteFloatEnv("AMIBOT_SEMANTIC_MIN_SCORE", DEFAULT_SEMANTIC_MIN_SCORE, {
+    min: 0,
+    max: 1,
+  });
+}
+
+function getSemanticWeight() {
+  return getFiniteFloatEnv("AMIBOT_SEMANTIC_WEIGHT", DEFAULT_SEMANTIC_WEIGHT, {
+    min: 0,
+    max: 100,
+  });
 }
 
 function getResendClient() {
@@ -206,6 +271,54 @@ async function extractTextFromFile(file, sourceType) {
   throw createUploadError("Unsupported knowledge file type");
 }
 
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
+  );
+
+  return results;
+}
+
+function shouldStopEmbeddingAttempts(error) {
+  return [400, 401, 403].includes(error?.status);
+}
+
+async function attachEmbeddingsToChunkDocuments(chunkDocuments, sourceName) {
+  if (!chunkDocuments.length || !getAmiBotEmbeddingsEnabled()) return;
+
+  let stopEmbeddingAttempts = false;
+
+  await mapWithConcurrency(chunkDocuments, getEmbeddingConcurrency(), async (chunkDocument) => {
+    if (stopEmbeddingAttempts) return;
+
+    try {
+      const { embedding, model } = await generateGeminiEmbedding(chunkDocument.chunkText, {
+        taskType: "RETRIEVAL_DOCUMENT",
+        title: sourceName || chunkDocument.sourceName,
+        timeoutMs: getEmbeddingTimeoutMs(),
+      });
+
+      chunkDocument.embedding = embedding;
+      chunkDocument.embeddingModel = model;
+      chunkDocument.embeddedAt = new Date();
+    } catch (error) {
+      console.error("AmiBot chunk embedding failed:", error.message || error);
+      if (shouldStopEmbeddingAttempts(error)) stopEmbeddingAttempts = true;
+    }
+  });
+}
+
 async function createKnowledgeSourceWithChunks({
   sourceName,
   sourceType,
@@ -238,16 +351,17 @@ async function createKnowledgeSourceWithChunks({
   });
 
   try {
-    await AmiBotKnowledgeChunk.insertMany(
-      chunks.map((chunk, index) => ({
-        sourceId: source._id,
-        sourceName,
-        sourceType,
-        chunkIndex: index,
-        chunkText: chunk,
-        metadata,
-      }))
-    );
+    const chunkDocuments = chunks.map((chunk, index) => ({
+      sourceId: source._id,
+      sourceName,
+      sourceType,
+      chunkIndex: index,
+      chunkText: chunk,
+      metadata,
+    }));
+
+    await attachEmbeddingsToChunkDocuments(chunkDocuments, sourceName);
+    await AmiBotKnowledgeChunk.insertMany(chunkDocuments);
   } catch (error) {
     await AmiBotKnowledgeSource.findByIdAndDelete(source._id).catch(() => {});
     await AmiBotKnowledgeChunk.deleteMany({ sourceId: source._id }).catch(() => {});
@@ -271,12 +385,113 @@ function uniqueChunks(chunks = []) {
   return unique;
 }
 
+async function getSemanticQueryEmbedding(query, supplementalQuery = "") {
+  if (!getAmiBotEmbeddingsEnabled()) return [];
+
+  const semanticQuery = [query, supplementalQuery]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, MAX_CONTEXT_CHARS + MAX_QUERY_LENGTH);
+
+  if (!semanticQuery.trim()) return [];
+
+  try {
+    const { embedding } = await generateGeminiEmbedding(semanticQuery, {
+      taskType: "QUESTION_ANSWERING",
+      title: "AmiBot question",
+      timeoutMs: getEmbeddingTimeoutMs(),
+    });
+    return embedding;
+  } catch (error) {
+    console.error("AmiBot query embedding failed:", error.message || error);
+    return [];
+  }
+}
+
+async function findSemanticKnowledgeCandidates() {
+  if (!getAmiBotEmbeddingsEnabled()) return [];
+
+  try {
+    return await AmiBotKnowledgeChunk.find({
+      embedding: { $exists: true, $ne: [] },
+    })
+      .sort({ embeddedAt: -1, createdAt: -1 })
+      .limit(getSemanticCandidateLimit())
+      .lean();
+  } catch (error) {
+    console.error("AmiBot semantic candidate fetch failed:", error.message || error);
+    return [];
+  }
+}
+
+function getMissingEmbeddingCriteria() {
+  return {
+    $or: [
+      { embedding: { $exists: false } },
+      { embedding: { $size: 0 } },
+      { embeddedAt: { $exists: false } },
+    ],
+  };
+}
+
+async function backfillKnowledgeEmbeddings(req, res) {
+  try {
+    if (!getAmiBotEmbeddingsEnabled()) {
+      return res.status(503).json({ error: "AmiBot embeddings are not configured" });
+    }
+
+    const requestedLimit = req.body?.limit || req.query.limit;
+    const limit = clampPositiveInt(requestedLimit, {
+      defaultValue: 50,
+      min: 1,
+      max: getMaxChunksPerUpload(),
+    });
+
+    const chunks = await AmiBotKnowledgeChunk.find(getMissingEmbeddingCriteria())
+      .sort({ createdAt: 1 })
+      .limit(limit)
+      .lean();
+
+    const chunkDocuments = chunks.map((chunk) => ({ ...chunk }));
+    await attachEmbeddingsToChunkDocuments(chunkDocuments);
+
+    const updates = chunkDocuments
+      .filter((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length)
+      .map((chunk) => ({
+        updateOne: {
+          filter: { _id: chunk._id },
+          update: {
+            $set: {
+              embedding: chunk.embedding,
+              embeddingModel: chunk.embeddingModel,
+              embeddedAt: chunk.embeddedAt,
+            },
+          },
+        },
+      }));
+
+    if (updates.length) await AmiBotKnowledgeChunk.bulkWrite(updates);
+
+    const remaining = await AmiBotKnowledgeChunk.countDocuments(getMissingEmbeddingCriteria());
+
+    return res.json({
+      message: "AmiBot embedding backfill completed",
+      scanned: chunks.length,
+      embedded: updates.length,
+      remaining,
+    });
+  } catch (err) {
+    console.error("AmiBot embedding backfill failed:", err.message || err);
+    const status = Number.isInteger(err.status) ? err.status : 500;
+    return res.status(status).json({ error: err.message || "Unable to backfill AmiBot embeddings" });
+  }
+}
+
 async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" } = {}) {
   const primaryTokens = normalizeSearchTokens(query, { maxTokens: 24 });
   const supplementalTokens = normalizeSearchTokens(supplementalQuery, { maxTokens: 18 })
     .filter((token) => !primaryTokens.includes(token));
   const tokens = [...primaryTokens, ...supplementalTokens].slice(0, 32);
-  if (!tokens.length) return [];
 
   const chunks = [];
   const textSearch = tokens.filter((token) => !token.includes("-")).join(" ");
@@ -308,10 +523,25 @@ async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" 
     }
   }
 
+  let semanticQueryEmbedding = [];
+  const semanticCandidates = await findSemanticKnowledgeCandidates();
+  if (semanticCandidates.length) {
+    semanticQueryEmbedding = await getSemanticQueryEmbedding(query, supplementalQuery);
+  }
+
+  if (semanticQueryEmbedding.length) {
+    chunks.push(...semanticCandidates);
+  }
+
+  if (!chunks.length) return [];
+
   return scoreKnowledgeChunks(uniqueChunks(chunks), query, {
     supplementalQuery,
     primaryWeight: 3,
     supplementalWeight: 1,
+    semanticQueryEmbedding,
+    semanticWeight: getSemanticWeight(),
+    minSemanticScore: getSemanticMinScore(),
   }).slice(0, limit);
 }
 
@@ -965,6 +1195,7 @@ async function closeAdminQuestion(req, res) {
 
 module.exports = {
   askAmibot,
+  backfillKnowledgeEmbeddings,
   clearAmiBotHistory,
   closeAdminQuestion,
   deleteKnowledgeSource,

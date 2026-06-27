@@ -9,6 +9,11 @@ const {
   isRetryableGeminiStatus,
   shouldTryNextGeminiModel,
 } = require("../controllers/geminiController");
+const {
+  generateGeminiEmbedding,
+  getGeminiEmbeddingDimensions,
+  getGeminiEmbeddingModel,
+} = require("../utils/geminiService");
 
 function mockFetchResponse(status, data) {
   return {
@@ -99,6 +104,91 @@ test("Gemini API key accepts additional deployment aliases", () => {
     }),
     "gemini-key"
   );
+});
+
+test("Gemini embedding config uses defaults and allowed dimensions", () => {
+  assert.equal(getGeminiEmbeddingModel({}), "gemini-embedding-2");
+  assert.equal(
+    getGeminiEmbeddingModel({ GEMINI_EMBEDDING_MODEL: "models/gemini-embedding-001" }),
+    "gemini-embedding-001"
+  );
+  assert.equal(getGeminiEmbeddingDimensions({ GEMINI_EMBEDDING_DIMENSIONS: "1536" }), 1536);
+  assert.equal(getGeminiEmbeddingDimensions({ GEMINI_EMBEDDING_DIMENSIONS: "1024" }), 768);
+});
+
+test("generateGeminiEmbedding calls embedContent with embedding-2 query prefix", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return mockFetchResponse(200, {
+      embedding: {
+        values: [0.1, "0.2", 0.3],
+      },
+    });
+  };
+
+  try {
+    const result = await generateGeminiEmbedding("Where do you work?", {
+      env: {
+        GEMINI_API_KEY: "test-key",
+        GEMINI_EMBEDDING_MODEL: "gemini-embedding-2",
+        GEMINI_EMBEDDING_DIMENSIONS: "768",
+      },
+      taskType: "QUESTION_ANSWERING",
+    });
+
+    const requestBody = JSON.parse(calls[0].options.body);
+
+    assert.deepEqual(result.embedding, [0.1, 0.2, 0.3]);
+    assert.equal(result.model, "gemini-embedding-2");
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /gemini-embedding-2:embedContent$/);
+    assert.equal(calls[0].options.headers["x-goog-api-key"], "test-key");
+    assert.equal(requestBody.output_dimensionality, 768);
+    assert.equal(requestBody.taskType, undefined);
+    assert.equal(
+      requestBody.content.parts[0].text,
+      "task: question answering | query: Where do you work?"
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("generateGeminiEmbedding sends task metadata for embedding-001 documents", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return mockFetchResponse(200, {
+      embedding: {
+        values: [1, 0],
+      },
+    });
+  };
+
+  try {
+    await generateGeminiEmbedding("AmiBot knowledge", {
+      env: {
+        GEMINI_API_KEY: "test-key",
+        GEMINI_EMBEDDING_MODEL: "gemini-embedding-001",
+      },
+      taskType: "RETRIEVAL_DOCUMENT",
+      title: "AmiBot API",
+    });
+
+    const requestBody = JSON.parse(calls[0].options.body);
+
+    assert.match(calls[0].url, /gemini-embedding-001:embedContent$/);
+    assert.equal(requestBody.taskType, "RETRIEVAL_DOCUMENT");
+    assert.equal(requestBody.title, "AmiBot API");
+    assert.equal(requestBody.content.parts[0].text, "AmiBot knowledge");
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test("Gemini request body accepts common prompt field names", () => {
