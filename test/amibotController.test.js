@@ -71,7 +71,7 @@ test("askAmibot falls back to direct greetings without admin review", async () =
     );
     assert.equal(res.body.answeredFromKnowledge, false);
     assert.equal(res.body.pendingQuestionId, null);
-    assert.equal(knowledgeLookups, 2);
+    assert.equal(knowledgeLookups, 0);
     assert.deepEqual(
       chatMessages.map((message) => message.sender),
       ["user", "bot"]

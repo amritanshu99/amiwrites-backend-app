@@ -5,6 +5,7 @@ const {
   createTask,
   updateTask,
   deleteTask,
+  reorderTasks,
 } = require("../controllers/taskController");
 
 const authMiddleware = require("../middleware/authMiddleware");
@@ -13,6 +14,7 @@ router.use(authMiddleware); // protect all routes
 
 router.get("/", getAllTasks);
 router.post("/", createTask);
+router.put("/reorder", reorderTasks);
 router.put("/:id", updateTask);
 router.delete("/:id", deleteTask);
 

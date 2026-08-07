@@ -496,38 +496,51 @@ async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" 
   const chunks = [];
   const textSearch = tokens.filter((token) => !token.includes("-")).join(" ");
 
-  if (textSearch) {
-    try {
-      const textMatches = await AmiBotKnowledgeChunk.find(
+  const textMatchesPromise = textSearch
+    ? AmiBotKnowledgeChunk.find(
         { $text: { $search: textSearch } },
         { score: { $meta: "textScore" } }
       )
         .sort({ score: { $meta: "textScore" } })
         .limit(limit)
-        .lean();
+        .lean()
+        .catch((error) => {
+          console.error("AmiBot text search failed:", error.message || error);
+          return [];
+        })
+    : Promise.resolve([]);
 
-      chunks.push(...textMatches);
-    } catch (error) {
-      console.error("AmiBot text search failed:", error.message || error);
-    }
-  }
+  const [textMatches, semanticCandidates] = await Promise.all([
+    textMatchesPromise,
+    findSemanticKnowledgeCandidates(),
+  ]);
+  chunks.push(...textMatches);
 
-  if (chunks.length < limit) {
-    const regex = makeTokenRegex(tokens);
-    if (regex) {
-      const fallbackMatches = await AmiBotKnowledgeChunk.find({ chunkText: regex })
-        .sort({ createdAt: -1 })
-        .limit(30)
-        .lean();
-      chunks.push(...fallbackMatches);
-    }
-  }
+  const fallbackMatchesPromise = chunks.length < limit
+    ? (async () => {
+        const regex = makeTokenRegex(tokens);
+        if (!regex) return [];
 
-  let semanticQueryEmbedding = [];
-  const semanticCandidates = await findSemanticKnowledgeCandidates();
-  if (semanticCandidates.length) {
-    semanticQueryEmbedding = await getSemanticQueryEmbedding(query, supplementalQuery);
-  }
+        try {
+          return await AmiBotKnowledgeChunk.find({ chunkText: regex })
+            .sort({ createdAt: -1 })
+            .limit(30)
+            .lean();
+        } catch (error) {
+          console.error("AmiBot fallback search failed:", error.message || error);
+          return [];
+        }
+      })()
+    : Promise.resolve([]);
+
+  const semanticEmbeddingPromise = semanticCandidates.length
+    ? getSemanticQueryEmbedding(query, supplementalQuery)
+    : Promise.resolve([]);
+  const [fallbackMatches, semanticQueryEmbedding] = await Promise.all([
+    fallbackMatchesPromise,
+    semanticEmbeddingPromise,
+  ]);
+  chunks.push(...fallbackMatches);
 
   if (semanticQueryEmbedding.length) {
     chunks.push(...semanticCandidates);
@@ -893,14 +906,6 @@ async function askAmibot(req, res) {
 
     const directReply = getDirectAmiBotReply(query);
     if (directReply) {
-      const directReplyChunks = directReply.knowledgeQuery
-        ? await findRelevantKnowledge(directReply.knowledgeQuery)
-        : [];
-      if (directReplyChunks.length) {
-        const knowledgeResponse = await answerFromKnowledge(req, res, query, directReplyChunks);
-        if (knowledgeResponse) return knowledgeResponse;
-      }
-
       return answerFromDirectReply(req, res, directReply);
     }
 
