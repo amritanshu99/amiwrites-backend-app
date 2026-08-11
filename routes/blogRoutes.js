@@ -4,6 +4,7 @@ const blogController = require("../controllers/blogController");
 const authMiddleware = require("../middleware/authMiddleware");
 
 router.get("/", blogController.getBlogs);
+router.get("/seo-index", blogController.getBlogSeoIndex);
 router.get("/:id", blogController.getBlogById);
 
 // Protected routes for blog creation and deletion
