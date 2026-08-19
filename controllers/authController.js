@@ -20,6 +20,10 @@ const MAX_USERNAME_LENGTH = 50;
 const MAX_PASSWORD_BYTES = 72;
 const MAX_PASSWORD_INPUT_BYTES = 1024;
 const MAX_GOOGLE_CREDENTIAL_LENGTH = 16 * 1024;
+const MAX_DISPLAY_NAME_LENGTH = 160;
+const MAX_AVATAR_URL_LENGTH = 2048;
+const GOOGLE_AVATAR_SIZE = 256;
+const GOOGLE_AVATAR_HOSTS = ["googleusercontent.com", "ggpht.com"];
 const GENERIC_RESET_MESSAGE = "If an account exists for that email, a password reset link has been sent.";
 
 const MAIL_FROM = process.env.MAIL_FROM;
@@ -60,11 +64,13 @@ function isBoundedPasswordInput(password) {
 }
 
 function signAuthToken(user, secret) {
+  const profileClaims = getGoogleProfileClaims(user);
   return jwt.sign(
     {
       id: user._id,
       username: user.username,
       authVersion: normalizeAuthVersion(user.authVersion),
+      ...profileClaims,
     },
     secret,
     { expiresIn: "7d", algorithm: "HS256" }
@@ -72,12 +78,13 @@ function signAuthToken(user, secret) {
 }
 
 function serializeUser(user) {
+  const profile = getGoogleProfileClaims(user);
   return {
     id: String(user._id),
     username: user.username,
     email: user.email,
-    displayName: user.displayName || user.username,
-    avatarUrl: user.avatarUrl || null,
+    displayName: profile.displayName || user.username,
+    avatarUrl: profile.avatarUrl || null,
     emailVerified: Boolean(user.emailVerified),
     authProviders: Array.isArray(user.authProviders) ? [...user.authProviders] : [],
   };
@@ -158,18 +165,71 @@ function addAuthProvider(user, provider) {
 }
 
 function normalizeDisplayName(value) {
-  return typeof value === "string" ? value.trim().slice(0, 160) : "";
+  if (typeof value !== "string") return "";
+
+  return value
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_DISPLAY_NAME_LENGTH);
+}
+
+function isGoogleAvatarHost(hostname) {
+  const normalizedHostname = String(hostname || "").toLowerCase();
+  return GOOGLE_AVATAR_HOSTS.some(
+    (host) => normalizedHostname === host || normalizedHostname.endsWith(`.${host}`)
+  );
+}
+
+function normalizeGoogleAvatarSize(url) {
+  if (!isGoogleAvatarHost(url.hostname)) return;
+
+  if (url.searchParams.has("sz")) {
+    url.searchParams.set("sz", String(GOOGLE_AVATAR_SIZE));
+  }
+
+  url.pathname = url.pathname.replace(
+    /=s\d+((?:-[a-z0-9]+)*)$/i,
+    `=s${GOOGLE_AVATAR_SIZE}$1`
+  );
 }
 
 function normalizeAvatarUrl(value) {
-  if (typeof value !== "string" || value.length > 2048) return "";
+  if (typeof value !== "string") return "";
+  const candidate = value.trim();
+  if (!candidate || candidate.length > MAX_AVATAR_URL_LENGTH) return "";
 
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" ? url.toString() : "";
+    const url = new URL(candidate);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      (url.port && url.port !== "443")
+    ) {
+      return "";
+    }
+
+    url.hash = "";
+    normalizeGoogleAvatarSize(url);
+    const normalizedUrl = url.toString();
+    return normalizedUrl.length <= MAX_AVATAR_URL_LENGTH ? normalizedUrl : "";
   } catch {
     return "";
   }
+}
+
+function getGoogleProfileClaims(user) {
+  const providers = Array.isArray(user?.authProviders) ? user.authProviders : [];
+  if (!user?.googleSub && !providers.includes("google")) return {};
+
+  const displayName = normalizeDisplayName(user.displayName);
+  const avatarUrl = normalizeAvatarUrl(user.avatarUrl);
+  return {
+    ...(displayName ? { displayName } : {}),
+    ...(avatarUrl ? { avatarUrl } : {}),
+  };
 }
 
 function applyGoogleProfile(user, payload) {
@@ -243,6 +303,34 @@ async function sendEmail({ to, subject, html }) {
   if (error) throw error;
 }
 
+let emailSender = sendEmail;
+
+function queueEmail(message, errorLabel) {
+  try {
+    Promise.resolve(emailSender(message)).catch((err) => {
+      console.error(errorLabel, err?.message || err);
+    });
+  } catch (err) {
+    console.error(errorLabel, err?.message || err);
+  }
+}
+
+function queueWelcomeBackEmail(user) {
+  const safeUsername = escapeHtml(user.username);
+  queueEmail({
+    to: user.email,
+    subject: "Welcome Back to AmiVerse! Keep creating your magic.",
+    html: `
+      <h2>Welcome back, ${safeUsername}!</h2>
+      <p>We're so glad to see you again at AmiVerse.</p>
+      <p>Your passion for storytelling inspires us! Whether you're here to write a new chapter or just to catch up, remember that your creative journey is important and we're here to support it.</p>
+      <p>Keep sharing your voice and creating amazing content. If there's anything you need, don't hesitate to reach out to our support team.</p>
+      <p>Thanks for being a part of AmiVerse!</p>
+      <p>Warm wishes,<br/><strong>The AmiVerse Team</strong></p>
+    `,
+  }, "Login email error:");
+}
+
 exports.signup = async (req, res) => {
   try {
     const body = getRequestBody(req);
@@ -284,7 +372,7 @@ exports.signup = async (req, res) => {
     await user.save();
 
     const safeUsername = escapeHtml(username);
-    sendEmail({
+    queueEmail({
       to: email,
       subject: "Welcome to AmiVerse! Your new writing adventure begins here.",
       html: `
@@ -295,7 +383,7 @@ exports.signup = async (req, res) => {
         <p>Happy writing and welcome to the family!</p>
         <p>Best regards,<br/><strong>The AmiVerse Team</strong></p>
       `,
-    }).catch((err) => console.error("Welcome email error:", err?.message || err));
+    }, "Welcome email error:");
 
     return sendAuthResponse(res, 201, "Signup successful", user);
   } catch (err) {
@@ -337,6 +425,7 @@ exports.login = async (req, res) => {
     addAuthProvider(user, "password");
     await user.save();
 
+    queueWelcomeBackEmail(user);
     return sendAuthResponse(res, 200, "Login successful", user);
   } catch (err) {
     console.error("Login error:", err.message || err);
@@ -393,6 +482,7 @@ exports.googleAuth = async (req, res) => {
 
       applyGoogleProfile(user, googleProfile);
       await user.save();
+      queueWelcomeBackEmail(user);
       return sendAuthResponse(res, 200, "Google sign-in successful", user);
     }
 
@@ -447,6 +537,7 @@ exports.googleAuth = async (req, res) => {
         );
       }
 
+      queueWelcomeBackEmail(linkedUser);
       return sendAuthResponse(res, 200, "Google account linked successfully", linkedUser);
     }
 
@@ -471,7 +562,7 @@ exports.googleAuth = async (req, res) => {
     await user.save();
 
     const safeUsername = escapeHtml(username);
-    sendEmail({
+    queueEmail({
       to: email,
       subject: "Welcome to AmiVerse! Your new writing adventure begins here.",
       html: `
@@ -479,7 +570,7 @@ exports.googleAuth = async (req, res) => {
         <p>Thank you for joining AmiVerse. Your account is ready, and we are excited to see what you create.</p>
         <p>Best regards,<br/><strong>The AmiVerse Team</strong></p>
       `,
-    }).catch((err) => console.error("Google signup welcome email error:", err?.message || err));
+    }, "Google signup welcome email error:");
 
     return sendAuthResponse(res, 201, "Google signup successful", user);
   } catch (err) {
@@ -662,10 +753,19 @@ exports.verifyToken = async (req, res) => {
 
 exports.__test = {
   generateUniqueGoogleUsername,
+  getGoogleProfileClaims,
   hashResetToken,
   isReservedAdminUsername,
+  normalizeAvatarUrl,
+  normalizeDisplayName,
+  resetEmailSender() {
+    emailSender = sendEmail;
+  },
   resetGoogleTokenVerifier() {
     googleTokenVerifier = undefined;
+  },
+  setEmailSender(sender) {
+    emailSender = sender;
   },
   setGoogleTokenVerifier(verifier) {
     googleTokenVerifier = verifier;

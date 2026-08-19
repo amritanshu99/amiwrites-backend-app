@@ -58,6 +58,7 @@ test.beforeEach(() => {
   process.env.JWT_SECRET = "test-jwt-secret-with-enough-entropy";
   process.env.GOOGLE_CLIENT_ID = "test-client.apps.googleusercontent.com";
   delete process.env.AMIBOT_ADMIN_USERNAME;
+  authController.__test.setEmailSender(async () => {});
 });
 
 test.afterEach(() => {
@@ -68,6 +69,7 @@ test.afterEach(() => {
   User.findOne = originals.findOne;
   User.findOneAndUpdate = originals.findOneAndUpdate;
   User.prototype.save = originals.save;
+  authController.__test.resetEmailSender();
   authController.__test.resetGoogleTokenVerifier();
 });
 
@@ -121,6 +123,26 @@ test("Google username generation avoids admin names and resolves collisions dete
   assert.equal(username, "writer-owner_1234567890");
   assert.deepEqual(seen, ["writer-owner", "writer-owner_1234567890"]);
   assert.ok(username.length <= 50);
+});
+
+test("Google profile claims normalize names, resize Google avatars, and reject unsafe URLs", () => {
+  assert.equal(
+    authController.__test.normalizeDisplayName("  A\nName\u202e  "),
+    "A Name"
+  );
+  assert.equal(
+    authController.__test.normalizeAvatarUrl(
+      "https://lh3.googleusercontent.com/a/profile=s96-c#ignored"
+    ),
+    "https://lh3.googleusercontent.com/a/profile=s256-c"
+  );
+  assert.equal(
+    authController.__test.normalizeAvatarUrl("https://images.example.com/avatar.png"),
+    "https://images.example.com/avatar.png"
+  );
+  assert.equal(authController.__test.normalizeAvatarUrl("http://images.example.com/avatar.png"), "");
+  assert.equal(authController.__test.normalizeAvatarUrl("https://user:pass@example.com/avatar.png"), "");
+  assert.equal(authController.__test.normalizeAvatarUrl(`https://example.com/${"a".repeat(2050)}`), "");
 });
 
 test("user schema requires a password for local accounts but not Google accounts", () => {
@@ -209,7 +231,11 @@ test("Google auth links a legacy account only after password confirmation and pr
     email: "admin@example.com",
     email_verified: true,
     name: "Admin Name",
-    picture: "https://example.com/avatar.png",
+    picture: "https://lh3.googleusercontent.com/a/admin=s96-c",
+  });
+  const sentEmails = [];
+  authController.__test.setEmailSender(async (message) => {
+    sentEmails.push(message);
   });
   const adminUser = {
     _id: "507f1f77bcf86cd799439011",
@@ -249,6 +275,98 @@ test("Google auth links a legacy account only after password confirmation and pr
     { id: adminUser._id, username: "amritanshu99" }
   );
   assert.equal(jwt.verify(res.body.token, process.env.JWT_SECRET).authVersion, 0);
+  assert.equal(jwt.verify(res.body.token, process.env.JWT_SECRET).displayName, "Admin Name");
+  assert.equal(
+    jwt.verify(res.body.token, process.env.JWT_SECRET).avatarUrl,
+    "https://lh3.googleusercontent.com/a/admin=s256-c"
+  );
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, "admin@example.com");
+  assert.match(sentEmails[0].subject, /^Welcome Back to AmiVerse!/);
+});
+
+test("new Google accounts receive sanitized profile claims in the app JWT", async () => {
+  installGooglePayload({
+    sub: "new-google-sub",
+    email: "new-google@example.com",
+    email_verified: true,
+    name: "  New\nWriter  ",
+    picture: "https://lh3.googleusercontent.com/a/new-writer=s64-c",
+  });
+  let savedUser;
+  const sentEmails = [];
+  authController.__test.setEmailSender(async (message) => {
+    sentEmails.push(message);
+  });
+  User.findOne = async () => null;
+  User.exists = async () => false;
+  User.prototype.save = async function save() {
+    savedUser = this;
+    return this;
+  };
+
+  const res = response();
+  await authController.googleAuth({ body: { credential: "google-id-token" } }, res);
+
+  const claims = jwt.verify(res.body.token, process.env.JWT_SECRET);
+  assert.equal(res.statusCode, 201);
+  assert.equal(claims.id, String(savedUser._id));
+  assert.equal(claims.username, "new-google");
+  assert.equal(claims.authVersion, 0);
+  assert.equal(claims.displayName, "New Writer");
+  assert.equal(
+    claims.avatarUrl,
+    "https://lh3.googleusercontent.com/a/new-writer=s256-c"
+  );
+  assert.equal(res.body.user.avatarUrl, claims.avatarUrl);
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, "new-google@example.com");
+  assert.match(sentEmails[0].subject, /^Welcome to AmiVerse!/);
+});
+
+test("returning Google sign-in refreshes signed display name and avatar", async () => {
+  installGooglePayload({
+    sub: "returning-google-sub",
+    email: "returning@example.com",
+    email_verified: true,
+    name: " Updated\tName ",
+    picture: "https://lh3.googleusercontent.com/a/returning=s48-c",
+  });
+  let saveCalls = 0;
+  const sentEmails = [];
+  authController.__test.setEmailSender(async (message) => {
+    sentEmails.push(message);
+  });
+  const user = {
+    _id: "507f1f77bcf86cd799439031",
+    username: "returning-user",
+    email: "returning@example.com",
+    googleSub: "returning-google-sub",
+    displayName: "Old Name",
+    avatarUrl: "https://lh3.googleusercontent.com/a/returning=s256-c",
+    authProviders: ["google"],
+    authVersion: 2,
+    async save() {
+      saveCalls += 1;
+      return this;
+    },
+  };
+  User.findOne = async () => user;
+
+  const res = response();
+  await authController.googleAuth({ body: { credential: "google-id-token" } }, res);
+
+  const claims = jwt.verify(res.body.token, process.env.JWT_SECRET);
+  assert.equal(res.statusCode, 200);
+  assert.equal(saveCalls, 1);
+  assert.equal(user.displayName, "Updated Name");
+  assert.equal(user.avatarUrl, "https://lh3.googleusercontent.com/a/returning=s256-c");
+  assert.equal(claims.displayName, "Updated Name");
+  assert.equal(claims.avatarUrl, user.avatarUrl);
+  assert.equal(claims.authVersion, 2);
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, "returning@example.com");
+  assert.match(sentEmails[0].subject, /^Welcome Back to AmiVerse!/);
 });
 
 test("Google auth treats a lost legacy-link race as a subject mismatch", async () => {
@@ -303,6 +421,10 @@ test("Google auth rejects an email already linked to a different Google subject"
 
 test("password login accepts a normalized email identifier and returns the unified auth payload", async () => {
   let lookup;
+  const sentEmails = [];
+  authController.__test.setEmailSender(async (message) => {
+    sentEmails.push(message);
+  });
   const user = {
     _id: "507f1f77bcf86cd799439013",
     username: "email-user",
@@ -329,6 +451,48 @@ test("password login accepts a normalized email identifier and returns the unifi
   assert.equal(res.body.message, "Login successful");
   assert.equal(res.body.user.username, "email-user");
   assert.ok(res.body.token);
+  const claims = jwt.verify(res.body.token, process.env.JWT_SECRET);
+  assert.equal(claims.username, "email-user");
+  assert.equal(claims.authVersion, 0);
+  assert.equal(Object.hasOwn(claims, "displayName"), false);
+  assert.equal(Object.hasOwn(claims, "avatarUrl"), false);
+  assert.equal(sentEmails.length, 1);
+  assert.equal(sentEmails[0].to, "email@example.com");
+  assert.match(sentEmails[0].subject, /^Welcome Back to AmiVerse!/);
+});
+
+test("welcome-email delivery failures do not fail a successful login", async () => {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  authController.__test.setEmailSender(async () => {
+    throw new Error("mail provider unavailable");
+  });
+  const user = {
+    _id: "507f1f77bcf86cd799439041",
+    username: "mail-safe-user",
+    email: "mail-safe@example.com",
+    password: "stored-hash",
+    authProviders: ["password"],
+    async save() {
+      return this;
+    },
+  };
+  User.findOne = async () => user;
+  bcrypt.compare = async () => true;
+
+  try {
+    const res = response();
+    await authController.login({
+      body: { identifier: "mail-safe-user", password: "password!1" },
+    }, res);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.message, "Login successful");
+    assert.ok(res.body.token);
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 test("auth handlers reject missing request bodies without throwing", async () => {
