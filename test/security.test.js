@@ -8,6 +8,7 @@ const {
   escapeRegExp,
   getBearerToken,
   isValidEmail,
+  normalizeAuthVersion,
   normalizeEmail,
 } = require("../utils/security");
 
@@ -31,6 +32,14 @@ test("email validation normalizes safe addresses and rejects invalid values", ()
   assert.equal(normalizeEmail("  USER@Example.COM  "), "user@example.com");
   assert.equal(isValidEmail("  USER@Example.COM  "), true);
   assert.equal(isValidEmail("not-an-email"), false);
+});
+
+test("auth version normalization keeps legacy tokens backward compatible", () => {
+  assert.equal(normalizeAuthVersion(undefined), 0);
+  assert.equal(normalizeAuthVersion(0), 0);
+  assert.equal(normalizeAuthVersion(3), 3);
+  assert.equal(normalizeAuthVersion(-1), 0);
+  assert.equal(normalizeAuthVersion("invalid"), 0);
 });
 
 test("query integer parsing clamps pagination-style inputs", () => {

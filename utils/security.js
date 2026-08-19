@@ -127,6 +127,11 @@ function normalizeEmail(value = "") {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+function normalizeAuthVersion(value) {
+  const version = Number(value);
+  return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+}
+
 function isValidEmail(value = "") {
   const email = normalizeEmail(value);
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -202,6 +207,7 @@ module.exports = {
   escapeRegExp,
   getBearerToken,
   isValidEmail,
+  normalizeAuthVersion,
   normalizeEmail,
   requireJwtSecret,
 };
