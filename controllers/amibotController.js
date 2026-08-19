@@ -26,7 +26,12 @@ const {
   rowsToSheetText,
   scoreKnowledgeChunks,
 } = require("../utils/amibotKnowledge");
-const { clampPositiveInt, escapeHtml } = require("../utils/security");
+const {
+  clampPositiveInt,
+  escapeHtml,
+  isValidEmail,
+  normalizeEmail,
+} = require("../utils/security");
 
 const MAX_QUERY_LENGTH = 4000;
 const MAX_ADMIN_ANSWER_LENGTH = 12000;
@@ -44,6 +49,7 @@ const UNKNOWN_GUEST_REPLY =
   "I do not have this answer in the uploaded AmiBot knowledge yet.";
 const UNKNOWN_USER_REPLY =
   "I do not have this answer in the uploaded AmiBot knowledge yet. I have sent your question to the admin for review.";
+const DEFAULT_ADMIN_EMAIL = "amritanshu99@gmail.com";
 
 let resendClient;
 
@@ -134,8 +140,17 @@ function getResendClient() {
   return resendClient;
 }
 
-function getAdminEmail() {
-  return process.env.AMIBOT_ADMIN_EMAIL || process.env.CONTACT_TO_EMAIL || "";
+function getAdminEmail(env = process.env) {
+  for (const candidate of [
+    env.AMIBOT_ADMIN_EMAIL,
+    env.CONTACT_TO_EMAIL,
+    DEFAULT_ADMIN_EMAIL,
+  ]) {
+    const email = normalizeEmail(candidate);
+    if (isValidEmail(email)) return email;
+  }
+
+  return DEFAULT_ADMIN_EMAIL;
 }
 
 function getSourceType(file) {
@@ -756,13 +771,27 @@ async function sendPendingQuestionEmail(question) {
 
   const frontendUrl = (process.env.PUBLIC_FRONTEND_URL || "https://www.amiverse.in").replace(/\/$/, "");
   const adminUrl = `${frontendUrl}/amibot-admin`;
+  const { error } = await getResendClient().emails.send(buildPendingQuestionEmail({
+    question,
+    from: mailFrom,
+    to: adminEmail,
+    adminUrl,
+  }));
+
+  if (error) throw error;
+
+  await AmiBotQuestion.findByIdAndUpdate(question._id, { emailNotifiedAt: new Date() });
+  return true;
+}
+
+function buildPendingQuestionEmail({ question, from, to, adminUrl }) {
   const userLine = question.userEmail
     ? `${escapeHtml(question.username || "User")} (${escapeHtml(question.userEmail)})`
     : escapeHtml(question.username || "User");
 
-  const { error } = await getResendClient().emails.send({
-    from: mailFrom,
-    to: adminEmail,
+  return {
+    from,
+    to,
     subject: "AmiBot needs an admin answer",
     html: `
       <h2>New AmiBot question</h2>
@@ -771,13 +800,8 @@ async function sendPendingQuestionEmail(question) {
       <p>${escapeHtml(question.question)}</p>
       <p><a href="${adminUrl}">Open AmiBot Admin</a></p>
     `,
-    reply_to: question.userEmail || undefined,
-  });
-
-  if (error) throw error;
-
-  await AmiBotQuestion.findByIdAndUpdate(question._id, { emailNotifiedAt: new Date() });
-  return true;
+    replyTo: question.userEmail || undefined,
+  };
 }
 
 async function createPendingQuestionForUser(req, query) {
@@ -1212,4 +1236,9 @@ module.exports = {
   uploadAmiBotKnowledge,
   uploadKnowledge,
   answerAdminQuestion,
+  __test: {
+    buildPendingQuestionEmail,
+    DEFAULT_ADMIN_EMAIL,
+    getAdminEmail,
+  },
 };

@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { askAmibot } = require("../controllers/amibotController");
+const amibotController = require("../controllers/amibotController");
+const { askAmibot } = amibotController;
 const AmiBotChatMessage = require("../models/AmiBotChatMessage");
 const AmiBotKnowledgeChunk = require("../models/AmiBotKnowledgeChunk");
 const AmiBotQuestion = require("../models/AmiBotQuestion");
@@ -19,6 +20,51 @@ function mockRes() {
     },
   };
 }
+
+test("pending-question email uses Resend replyTo and escapes user content", () => {
+  const message = amibotController.__test.buildPendingQuestionEmail({
+    question: {
+      username: "<Writer>",
+      userEmail: "writer@example.com",
+      question: "Can you explain <this>?",
+    },
+    from: "AmiVerse <noreply@example.com>",
+    to: "admin@example.com",
+    adminUrl: "https://www.amiverse.in/amibot-admin",
+  });
+
+  assert.equal(message.replyTo, "writer@example.com");
+  assert.equal(Object.hasOwn(message, "reply_to"), false);
+  assert.match(message.html, /&lt;Writer&gt;/);
+  assert.match(message.html, /Can you explain &lt;this&gt;\?/);
+});
+
+test("admin email configuration normalizes values and falls back to the canonical address", () => {
+  const { DEFAULT_ADMIN_EMAIL, getAdminEmail } = amibotController.__test;
+
+  assert.equal(
+    getAdminEmail({
+      AMIBOT_ADMIN_EMAIL: "  ADMIN@Example.COM ",
+      CONTACT_TO_EMAIL: "contact@example.com",
+    }),
+    "admin@example.com"
+  );
+  assert.equal(
+    getAdminEmail({
+      AMIBOT_ADMIN_EMAIL: "   ",
+      CONTACT_TO_EMAIL: " CONTACT@Example.COM ",
+    }),
+    "contact@example.com"
+  );
+  assert.equal(
+    getAdminEmail({
+      AMIBOT_ADMIN_EMAIL: "not-an-email",
+      CONTACT_TO_EMAIL: "also-invalid",
+    }),
+    DEFAULT_ADMIN_EMAIL
+  );
+  assert.equal(DEFAULT_ADMIN_EMAIL, "amritanshu99@gmail.com");
+});
 
 test("askAmibot falls back to direct greetings without admin review", async () => {
   const originalChatCreate = AmiBotChatMessage.create;
