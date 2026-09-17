@@ -49,6 +49,8 @@ const UNKNOWN_GUEST_REPLY =
   "I do not have this answer in the uploaded AmiBot knowledge yet.";
 const UNKNOWN_USER_REPLY =
   "I do not have this answer in the uploaded AmiBot knowledge yet. I have sent your question to the admin for review.";
+const UNKNOWN_UNSAVED_REPLY =
+  "I do not have this answer in the uploaded AmiBot knowledge yet. I could not send your question to the admin right now. Please try again later.";
 const DEFAULT_ADMIN_EMAIL = "amritanshu99@gmail.com";
 
 let resendClient;
@@ -650,6 +652,7 @@ function coerceConversationMessages(messages = [], currentQuery = "") {
 
   const normalizedCurrentQuery = normalizeQuestion(currentQuery);
   const coerced = messages
+    .filter((message) => message && typeof message === "object" && !Array.isArray(message))
     .map((message) => {
       const text = getConversationText(message);
       if (!text) return null;
@@ -805,7 +808,7 @@ function buildPendingQuestionEmail({ question, from, to, adminUrl }) {
 }
 
 async function createPendingQuestionForUser(req, query) {
-  const userId = req.user?.id;
+  const userId = req.user?.id || req.user?._id;
   if (!userId || !mongoose.Types.ObjectId.isValid(userId)) return null;
 
   const normalizedQuestion = normalizeQuestion(query);
@@ -849,10 +852,17 @@ function buildChatResponse({ answer, answeredFromKnowledge, sources = [], pendin
 }
 
 async function answerFromUnknownData(req, res, query) {
-  const pendingQuestion = req.user
-    ? await createPendingQuestionForUser(req, query)
-    : null;
-  const answer = req.user ? UNKNOWN_USER_REPLY : UNKNOWN_GUEST_REPLY;
+  let pendingQuestion = null;
+  if (req.user) {
+    try {
+      pendingQuestion = await createPendingQuestionForUser(req, query);
+    } catch (error) {
+      console.error("AmiBot pending question save failed:", error.message || error);
+    }
+  }
+  const answer = pendingQuestion
+    ? UNKNOWN_USER_REPLY
+    : req.user ? UNKNOWN_UNSAVED_REPLY : UNKNOWN_GUEST_REPLY;
 
   await saveChatMessage(req.user, "bot", answer, {
     answeredFromKnowledge: false,
@@ -890,13 +900,21 @@ async function answerFromKnowledge(req, res, query, relevantChunks, { conversati
     generationConfig: {
       temperature: getAmiBotTemperature(),
       topP: 0.9,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          answerable: { type: "BOOLEAN" },
+          answer: { type: "STRING" },
+        },
+        required: ["answerable", "answer"],
+      },
     },
   });
   const structuredAnswer = parseStructuredAnswer(text);
-  const answer = structuredAnswer?.answer || text.trim();
-  const answerable = structuredAnswer ? structuredAnswer.answerable : Boolean(answer);
-
-  if (!answerable) return null;
+  // Only an explicit, nonempty structured answer can be attributed to knowledge.
+  if (!structuredAnswer?.answerable || !structuredAnswer.answer) return null;
+  const answer = structuredAnswer.answer;
 
   const sources = getSourcesFromChunks(relevantChunks);
 
@@ -916,7 +934,7 @@ async function answerFromKnowledge(req, res, query, relevantChunks, { conversati
 
 async function askAmibot(req, res) {
   try {
-    const query = typeof req.body.query === "string" ? req.body.query.trim() : "";
+    const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
 
     if (!query) {
       return res.status(400).json({ error: "Query is required" });
@@ -930,7 +948,7 @@ async function askAmibot(req, res) {
 
     const directReply = getDirectAmiBotReply(query);
     if (directReply) {
-      return answerFromDirectReply(req, res, directReply);
+      return await answerFromDirectReply(req, res, directReply);
     }
 
     const conversationMessages = await getConversationMessages(req, query);
@@ -939,7 +957,7 @@ async function askAmibot(req, res) {
     const relevantChunks = await findRelevantKnowledge(query, { supplementalQuery });
 
     if (!relevantChunks.length) {
-      return answerFromUnknownData(req, res, query);
+      return await answerFromUnknownData(req, res, query);
     }
 
     const knowledgeResponse = await answerFromKnowledge(req, res, query, relevantChunks, {
@@ -947,7 +965,7 @@ async function askAmibot(req, res) {
     });
     if (knowledgeResponse) return knowledgeResponse;
 
-    return answerFromUnknownData(req, res, query);
+    return await answerFromUnknownData(req, res, query);
   } catch (err) {
     console.error("AmiBot request error:", err.message || err);
     const status = Number.isInteger(err.status) ? err.status : 500;
@@ -1137,23 +1155,6 @@ async function answerAdminQuestion(req, res) {
       return res.status(404).json({ error: "Question not found" });
     }
 
-    question.adminAnswer = answer;
-    question.status = "answered";
-    question.answeredAt = new Date();
-    question.answeredBy = req.user.id;
-    await question.save();
-
-    await saveChatMessage(
-      { id: question.userId },
-      "bot",
-      answer,
-      {
-        answeredFromKnowledge: false,
-        answerSource: "admin",
-        pendingQuestionId: question._id,
-      }
-    );
-
     let source = null;
     if (addToKnowledge) {
       source = await createKnowledgeSourceWithChunks({
@@ -1169,6 +1170,31 @@ async function answerAdminQuestion(req, res) {
         },
       });
     }
+
+    try {
+      question.adminAnswer = answer;
+      question.status = "answered";
+      question.answeredAt = new Date();
+      question.answeredBy = req.user.id;
+      await question.save();
+    } catch (error) {
+      if (source) {
+        await AmiBotKnowledgeChunk.deleteMany({ sourceId: source._id }).catch(() => {});
+        await AmiBotKnowledgeSource.findByIdAndDelete(source._id).catch(() => {});
+      }
+      throw error;
+    }
+
+    await saveChatMessage(
+      { id: question.userId },
+      "bot",
+      answer,
+      {
+        answeredFromKnowledge: false,
+        answerSource: "admin",
+        pendingQuestionId: question._id,
+      }
+    );
 
     return res.json({
       message: "AmiBot question answered",

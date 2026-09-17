@@ -543,10 +543,10 @@ function parseStructuredAnswer(raw = "") {
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed.answer === "string") {
+      if (parsed && typeof parsed.answer === "string" && typeof parsed.answerable === "boolean") {
         return {
           answer: parsed.answer.trim(),
-          answerable: parsed.answerable !== false,
+          answerable: parsed.answerable,
         };
       }
     } catch {
