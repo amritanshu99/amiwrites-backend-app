@@ -18,6 +18,9 @@ function normalizeTask(task) {
 
   return {
     ...task,
+    boardType: task.boardType === "daily" ? "daily" : "goals",
+    plannedDate: task.plannedDate || null,
+    linkedGoalId: task.linkedGoalId || null,
     status,
     priority: TASK_PRIORITIES.includes(task.priority) ? task.priority : "medium",
     labels: Array.isArray(task.labels) ? task.labels : [],
@@ -42,6 +45,31 @@ function cleanLabels(labels) {
         .slice(0, 8)
     ),
   ];
+}
+
+async function validatePlanning({ boardType, plannedDate, linkedGoalId }, userId, taskId) {
+  if (!["goals", "daily"].includes(boardType)) throw new Error("Invalid task board");
+  if (boardType === "goals") {
+    if (plannedDate || linkedGoalId) throw new Error("Only daily tasks can have a planned date or linked goal");
+    return;
+  }
+  if (typeof plannedDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(plannedDate)) {
+    throw new Error("Choose a valid planned date");
+  }
+  const parsed = new Date(`${plannedDate}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== plannedDate) {
+    throw new Error("Choose a valid planned date");
+  }
+  if (!linkedGoalId) return;
+  if (!mongoose.isObjectIdOrHexString(linkedGoalId) || String(linkedGoalId) === String(taskId)) {
+    throw new Error("Invalid linked goal");
+  }
+  const goal = await Task.findOne({
+    _id: linkedGoalId,
+    userId,
+    $or: [{ boardType: "goals" }, { boardType: { $exists: false } }],
+  }).lean();
+  if (!goal) throw new Error("Choose a long-term goal from your own board");
 }
 
 exports.getAllTasks = async (req, res) => {
@@ -70,6 +98,9 @@ exports.createTask = async (req, res) => {
     dueDate = null,
     labels = [],
     position = Date.now(),
+    boardType = "goals",
+    plannedDate = null,
+    linkedGoalId = null,
   } = req.body;
 
   if (!TASK_STATUSES.includes(status)) {
@@ -81,11 +112,15 @@ exports.createTask = async (req, res) => {
   }
 
   try {
+    await validatePlanning({ boardType, plannedDate, linkedGoalId }, req.user.id);
     const task = await Task.create({
       title,
       description,
       status,
       priority,
+      boardType,
+      plannedDate: plannedDate || null,
+      linkedGoalId: linkedGoalId || null,
       dueDate: dueDate || null,
       labels: cleanLabels(labels),
       position: Number.isFinite(Number(position)) ? Number(position) : Date.now(),
@@ -149,6 +184,19 @@ exports.updateTask = async (req, res) => {
   }
 
   try {
+    const existing = await Task.findOne({ _id: id, userId: req.user.id }).lean();
+    if (!existing) return res.status(404).json({ error: "Task not found" });
+    const boardType = existing.boardType || "goals";
+    if (req.body.boardType !== undefined && req.body.boardType !== boardType) {
+      return res.status(400).json({ error: "A task must stay on its original board" });
+    }
+    if (req.body.plannedDate !== undefined) updates.plannedDate = req.body.plannedDate || null;
+    if (req.body.linkedGoalId !== undefined) updates.linkedGoalId = req.body.linkedGoalId || null;
+    await validatePlanning({
+      boardType,
+      plannedDate: updates.plannedDate === undefined ? existing.plannedDate : updates.plannedDate,
+      linkedGoalId: updates.linkedGoalId === undefined ? existing.linkedGoalId : updates.linkedGoalId,
+    }, req.user.id, id);
     const updatedTask = await Task.findOneAndUpdate(
       { _id: id, userId: req.user.id },
       { $set: updates },
@@ -225,6 +273,11 @@ exports.deleteTask = async (req, res) => {
     const deleted = await Task.findOneAndDelete({ _id: id, userId: req.user.id });
     if (!deleted) return res.status(404).json({ error: "Task not found" });
 
+    // Keep daily work when its parent goal is removed.
+    await Task.updateMany(
+      { userId: req.user.id, linkedGoalId: id },
+      { $set: { linkedGoalId: null } }
+    );
     cache.del(taskCacheKey(req.user.id));
     res.json({ message: "Task permanently deleted" });
   } catch (err) {

@@ -17,6 +17,10 @@ const taskSchema = new mongoose.Schema(
       default: "medium",
     },
     dueDate: { type: Date, default: null },
+    boardType: { type: String, enum: ["goals", "daily"], default: "goals" },
+    // Calendar dates are stored without a timezone so a plan stays on its day.
+    plannedDate: { type: String, default: null },
+    linkedGoalId: { type: mongoose.Schema.Types.ObjectId, ref: "Task", default: null },
     completedAt: { type: Date, default: null },
     labels: {
       type: [{ type: String, trim: true, maxlength: 30 }],
@@ -31,5 +35,7 @@ const taskSchema = new mongoose.Schema(
 
 taskSchema.index({ userId: 1, status: 1, position: 1 });
 taskSchema.index({ userId: 1, createdAt: -1 });
+taskSchema.index({ userId: 1, boardType: 1, plannedDate: 1 });
+taskSchema.index({ userId: 1, linkedGoalId: 1 });
 
 module.exports = mongoose.model("Task", taskSchema);
