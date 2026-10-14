@@ -2,7 +2,7 @@
 
 ## Current default: free browser voice
 
-The AmiBot UI now runs Chatterbox ONNX and Whisper tiny.en in the visitor's browser.
+The AmiBot UI now runs Chatterbox ONNX and Whisper base.en in the visitor's browser.
 **Do not deploy the Render worker Blueprint for this mode.** No extra voice host,
 Python worker, or `AMIBOT_VOICE_*` environment settings are needed. The existing
 text-answer provider and its limits remain unchanged.
