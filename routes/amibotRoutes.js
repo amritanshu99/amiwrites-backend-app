@@ -18,9 +18,14 @@ const optionalAuthMiddleware = require("../middleware/optionalAuthMiddleware");
 const { requireAdmin } = require("../middleware/adminMiddleware");
 const { getVoiceStatus, transcribeVoice, synthesizeVoice, saveVoiceReference, uploadAudio } = require("../controllers/amibotVoiceController");
 const { createRateLimiter } = require("../utils/security");
+const { browserVoiceStatus, browserVoiceReference, saveBrowserVoiceReference } = require("../controllers/amibotBrowserVoiceController");
 
 const router = express.Router();
 const voiceRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 120 });
+
+router.get("/voice/browser/status", browserVoiceStatus);
+router.get("/voice/browser/reference", voiceRateLimiter, browserVoiceReference);
+router.post("/admin/voice/browser/reference", authMiddleware, requireAdmin, voiceRateLimiter, uploadAudio, saveBrowserVoiceReference);
 
 router.get("/voice/status", getVoiceStatus);
 router.post("/voice/transcribe", voiceRateLimiter, optionalAuthMiddleware, uploadAudio, transcribeVoice);

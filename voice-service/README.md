@@ -1,5 +1,44 @@
 # AmiBot voice mode
 
+## Current default: free browser voice
+
+The AmiBot UI now runs Chatterbox ONNX and Whisper tiny.en in the visitor's browser.
+**Do not deploy the Render worker Blueprint for this mode.** No extra voice host,
+Python worker, or `AMIBOT_VOICE_*` environment settings are needed. The existing
+text-answer provider and its limits remain unchanged.
+
+Sign in as the existing admin, open Ami Pulse (`/amibot-admin`), and save 5–30 seconds
+of clear English under **Your voice, in AmiBot**. Confirm voice ownership and public
+sharing: visitors download this reference to generate the cloned voice and can
+save copies. The reference is stored in MongoDB, so it survives free Render
+restarts. Private legacy recordings are not automatically published.
+
+Browser endpoints:
+
+- `GET /api/amibot/voice/browser/status`: readiness of the saved reference.
+- `GET /api/amibot/voice/browser/reference`: public WAV, only after explicit consent.
+- `POST /api/amibot/admin/voice/browser/reference`: authenticated admin replacement;
+  multipart `audio`, `consent=true`, `browserSharingConsent=true`.
+
+The admin browser normalizes audio to mono 24 kHz PCM16 WAV before upload. Express
+checks the actual bytes, a 5–30 second duration, and minimum volume before saving
+to `AmiBotVoiceProfile`. The maximum normalized WAV is 1,440,044 bytes. Conversation
+audio is processed locally; only recognized text reaches the existing chat API.
+
+Each visitor explicitly accepts an initial model download of about 1.6 GB. English
+is supported; capable desktop Chrome/Edge works best. CPU fallback can be slow and
+low-memory devices may fail. Models are cached when browser storage permits.
+Voice similarity needs a listening check with the actual owner's recording.
+
+Run `node --test test/amibotBrowserVoice.test.js test/amibotVoice.test.js` to verify
+the backend voice routes without connecting to the production database.
+
+## Optional legacy Python worker
+
+The rest of this document describes the earlier server-based implementation. Its
+routes remain for compatibility, but the current UI uses the browser endpoints
+above. This worker is **not required** for the zero-cost browser setup.
+
 The browser records a turn, Express sends it to faster-whisper, AmiBot answers using
 its existing knowledge and history, and Chatterbox Multilingual speaks the answer
 using the owner's reference recording. The browser plays sentence chunks and
@@ -29,10 +68,10 @@ requested; AmiBot exposes only English/Hindi. This avoids an unrelated auxiliary
 download and a Windows cache-path issue without changing English/Hindi processing
 or editing installed packages. Recheck this compatibility wrapper on upgrades.
 
-Start/restart Express in another terminal (`npm.cmd start`) and the frontend in its
-own repository (`npm.cmd start`). Sign in as the existing AmiBot admin and visit
-`/amibot-admin`. Under **Your voice, in AmiBot**, record or upload 15–30 seconds of
-clean speech, preview it, confirm ownership, and choose **Save AmiBot voice**.
+Start/restart Express in another terminal (`npm.cmd start`). The legacy worker
+reference endpoint is `POST /api/amibot/admin/voice/reference` with admin auth,
+multipart `audio`, and `consent=true`. The current admin UI targets browser voice
+instead; it does not enroll this private Python worker.
 Accepted recordings are 5–30 seconds, up to 10 MB. The worker decodes recordings,
 checks duration and volume, and saves normalized WAV audio privately. Browser voice
 turns are limited to 55 seconds. Conversation recordings are processed in memory.
@@ -66,8 +105,7 @@ No browser/system voice is substituted if the reference or worker is unavailable
 
 ## Production
 
-The existing frontend and Express host cannot run the model inside the browser.
-Deploy this worker on a persistent Python/GPU host, mount private persistent
+For the optional server-based mode, deploy this worker on a Python/GPU host, mount private persistent
 storage for the reference and model cache, and configure Express with its reachable
 URL and matching secret. Use a private network or HTTPS between hosts. Bind uvicorn
 to `0.0.0.0` only on a host whose ingress is configured for the worker. Start it with:
