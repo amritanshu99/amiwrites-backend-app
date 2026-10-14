@@ -895,7 +895,11 @@ async function answerFromDirectReply(req, res, directReply) {
 
 async function answerFromKnowledge(req, res, query, relevantChunks, { conversationContext = "" } = {}) {
   const context = formatKnowledgeContext(relevantChunks);
-  const prompt = buildGroundedPrompt({ query, context, conversationContext });
+  let prompt = buildGroundedPrompt({ query, context, conversationContext });
+  if (req.body?.voiceMode === true) {
+    const language = req.body.language === "hi" ? "Hindi (Devanagari)" : "English";
+    prompt += `\nThis answer will be spoken aloud. Reply in ${language}, using 1–3 short conversational sentences, ideally under 70 words. Avoid Markdown, tables, URLs, and long lists. Keep all grounding and answerability rules above.`;
+  }
   const { text } = await generateGeminiText(prompt, {
     generationConfig: {
       temperature: getAmiBotTemperature(),

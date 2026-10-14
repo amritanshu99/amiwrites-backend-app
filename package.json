@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "voice:setup": "node scripts/start-voice-service.js --setup",
+    "voice:start": "node scripts/start-voice-service.js"
   },
   "keywords": [],
   "author": "",
