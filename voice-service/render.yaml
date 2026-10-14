@@ -1,0 +1,40 @@
+# Deploy this Blueprint only after reviewing its recurring Render charges.
+# Keep the existing Express service outside this Blueprint.
+services:
+  - type: pserv
+    name: amibot-voice
+    runtime: docker
+    repo: https://github.com/amritanshu99/amiwrites-backend-app
+    branch: main
+    region: oregon
+    rootDir: voice-service
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: 4c-16g
+    numInstances: 1
+    autoDeployTrigger: commit
+    envVars:
+      - key: AMIBOT_VOICE_TOKEN
+        generateValue: true
+      - key: AMIBOT_VOICE_DEVICE
+        value: cpu
+      - key: AMIBOT_WHISPER_MODEL
+        value: small
+      - key: AMIBOT_VOICE_REFERENCE
+        value: /data/reference.wav
+      - key: HF_HOME
+        value: /data/cache/huggingface
+      - key: TORCH_HOME
+        value: /data/cache/torch
+      - key: PKUSEG_HOME
+        value: /data/cache/pkuseg
+      - key: OMP_NUM_THREADS
+        value: "4"
+      - key: MKL_NUM_THREADS
+        value: "4"
+      - key: PORT
+        value: "8001"
+    disk:
+      name: amibot-voice-data
+      mountPath: /data
+      sizeGB: 10
