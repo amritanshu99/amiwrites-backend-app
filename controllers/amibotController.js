@@ -898,7 +898,7 @@ async function answerFromKnowledge(req, res, query, relevantChunks, { conversati
   let prompt = buildGroundedPrompt({ query, context, conversationContext });
   if (req.body?.voiceMode === true) {
     const language = req.body.language === "hi" ? "Hindi (Devanagari)" : "English";
-    prompt += `\nThis answer will be spoken aloud. Reply in ${language}, using 1–3 short conversational sentences, normally 10–50 words. Start with a short, direct sentence of 6–8 words when natural, then give any remaining details. Avoid Markdown, tables, URLs, and long lists. Keep all grounding and answerability rules above.`;
+    prompt += `\nThis answer will be spoken aloud. Reply in ${language}. For a simple question, give the direct answer in one natural sentence of about 10 to 20 words. Include the facts needed to answer the question; use up to 50 words when the user asks for details or multiple points. Avoid filler introductions, Markdown, tables, URLs, and long lists. Keep all grounding and answerability rules above.`;
   }
   const { text } = await generateGeminiText(prompt, {
     lowLatency: req.body?.voiceMode === true,

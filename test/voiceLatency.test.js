@@ -43,7 +43,9 @@ test("AmiBot voice route requests short grounded answers with low latency enable
   await require("../controllers/amibotController").askAmibot({body:{query:"What skills are listed?",history:[],voiceMode:true,language:"en"}},res);
   assert.equal(body.generationConfig.thinkingConfig.thinkingBudget,0);
   assert.equal(body.generationConfig.maxOutputTokens,384);
-  assert.match(body.contents[0].parts[0].text,/10.50 words/);
+  assert.match(body.contents[0].parts[0].text,/10 to 20 words/);
   assert.match(body.contents[0].parts[0].text,/only the provided AmiBot knowledge/);
+  assert.match(body.contents[0].parts[0].text,/up to 50 words/);
+  assert.match(body.contents[0].parts[0].text,/Include the facts needed/);
   assert.equal(res.body.answeredFromKnowledge,true);
 });
