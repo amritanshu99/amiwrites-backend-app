@@ -225,7 +225,7 @@ async function generateGeminiEmbedding(
 
 async function generateGeminiText(
   prompt,
-  { env = process.env, timeoutMs = 20000, generationConfig = null } = {}
+  { env = process.env, timeoutMs = 20000, generationConfig = null, lowLatency = false } = {}
 ) {
   const apiKey = getGeminiApiKey(env);
 
@@ -245,12 +245,15 @@ async function generateGeminiText(
     requestBody.generationConfig = generationConfig;
   }
 
-  const postData = JSON.stringify(requestBody);
-
   const models = getGeminiModels(env);
   let lastFailure = null;
 
   for (const model of models) {
+    // Flash 2.5 can skip thinking for short grounded voice answers. Other
+    // models and ordinary chat keep their existing generation settings.
+    const config = lowLatency && /^gemini-2\.5-flash(?:-|$)/.test(model)
+      ? { ...generationConfig, maxOutputTokens: 384, thinkingConfig: { thinkingBudget: 0 } } : generationConfig;
+    const postData = JSON.stringify({ ...requestBody, ...(config ? { generationConfig: config } : {}) });
     let result;
 
     try {
