@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const Blog = require("../models/Blog");
 const BlogStat = require("../models/BlogStat");
+const BlogRead = require("../models/BlogRead");
 const TrendingEventReceipt = require("../models/TrendingEventReceipt");
 const trendingController = require("../controllers/trendingRLController");
 const { getEpoch } = require("../utils/trendingPolicy");
@@ -22,6 +23,7 @@ const originals = {
   statDeleteOne: BlogStat.deleteOne,
   statFind: BlogStat.find,
   receiptDeleteMany: TrendingEventReceipt.deleteMany,
+  readDeleteMany: BlogRead.deleteMany,
 };
 
 function lean(value) {
@@ -83,6 +85,7 @@ test.after(() => {
   BlogStat.deleteOne = originals.statDeleteOne;
   BlogStat.find = originals.statFind;
   TrendingEventReceipt.deleteMany = originals.receiptDeleteMany;
+  BlogRead.deleteMany = originals.readDeleteMany;
 });
 
 test("blog creation invalidates the active trending epoch cache", async () => {
@@ -113,6 +116,7 @@ test("blog creation invalidates the active trending epoch cache", async () => {
 test("single-blog deletion removes stats and receipts and invalidates trending", async () => {
   const getFindCalls = installTrendingSource();
   const cleanup = [];
+  BlogRead.deleteMany = async (filter) => { cleanup.push(["reads", filter]); return { deletedCount: 1 }; };
   Blog.findByIdAndDelete = async () => ({ _id: POST_ID });
   BlogStat.deleteOne = async (filter) => {
     cleanup.push(["stats", filter]);
@@ -135,6 +139,7 @@ test("single-blog deletion removes stats and receipts and invalidates trending",
   assert.deepEqual(cleanup, [
     ["stats", { postId: POST_ID }],
     ["receipts", { postId: POST_ID }],
+    ["reads", { postId: POST_ID }],
   ]);
 
   await fetchTrending();
@@ -144,6 +149,7 @@ test("single-blog deletion removes stats and receipts and invalidates trending",
 test("delete-all removes every stat and receipt and invalidates trending", async () => {
   const getFindCalls = installTrendingSource();
   const cleanup = [];
+  BlogRead.deleteMany = async (filter) => { cleanup.push(["reads", filter]); return { deletedCount: 1 }; };
   Blog.deleteMany = async () => ({ deletedCount: 2 });
   BlogStat.deleteMany = async (filter) => {
     cleanup.push(["stats", filter]);
@@ -165,6 +171,7 @@ test("delete-all removes every stat and receipt and invalidates trending", async
   assert.deepEqual(cleanup, [
     ["stats", {}],
     ["receipts", {}],
+    ["reads", {}],
   ]);
   await fetchTrending();
   assert.equal(getFindCalls(), 2);

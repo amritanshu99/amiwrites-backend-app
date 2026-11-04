@@ -3,6 +3,7 @@ const cache = require("../utils/cache");
 const { sendNotificationToAll } = require("./pushController");
 const Blog = require("../models/Blog");
 const BlogStat = require("../models/BlogStat");
+const BlogRead = require("../models/BlogRead");
 const TrendingEventReceipt = require("../models/TrendingEventReceipt");
 const { invalidateTrendingCache } = require("./trendingRLController");
 const { clampPositiveInt, escapeRegExp } = require("../utils/security");
@@ -228,6 +229,7 @@ exports.deleteBlog = async (req, res) => {
     await Promise.all([
       BlogStat.deleteOne({ postId: blog._id }),
       TrendingEventReceipt.deleteMany({ postId: blog._id }),
+      BlogRead.deleteMany({ postId: blog._id }),
     ]);
     invalidateTrendingCache();
 
@@ -249,6 +251,7 @@ exports.deleteAllBlogs = async (req, res) => {
     await Promise.all([
       BlogStat.deleteMany({}),
       TrendingEventReceipt.deleteMany({}),
+      BlogRead.deleteMany({}),
     ]);
     invalidateTrendingCache();
 

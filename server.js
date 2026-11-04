@@ -69,6 +69,7 @@ app.use("/api/recommender", require("./routes/recommenderRoutes"));
 app.use("/api/emotion", require("./routes/emotionRoutes"));
 app.use("/api/amibot", require("./routes/amibotRoutes"));
 app.use("/api/trending-rl", require("./routes/trendingRLRoutes"));
+app.use("/api/most-read", require("./routes/mostReadRoutes"));
 
 app.use((err, req, res, next) => {
   if (err.type === "entity.too.large") {
@@ -104,8 +105,11 @@ mongoose
   .connect(process.env.MONGO_URI, {
     serverSelectionTimeoutMS: mongoServerSelectionTimeoutMS,
   })
-  .then(() => {
+  .then(async () => {
     console.log("Connected to MongoDB");
+
+    // Establish the daily read uniqueness constraint before accepting traffic.
+    await require("./models/BlogRead").init();
 
     const { startDecayJob } = require("./utils/decay");
     startDecayJob();
