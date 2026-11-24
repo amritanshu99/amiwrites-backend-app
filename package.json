@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "eval:amibot": "node evals/amibot/run.js",
     "voice:setup": "node scripts/start-voice-service.js --setup",
     "voice:start": "node scripts/start-voice-service.js"
   },

@@ -1,0 +1,17 @@
+name: AmiBot RAG evaluations
+on:
+  pull_request:
+  push:
+    branches: [main, fix/amibot-unknown-questions, 'codex/amibot-rag-evals*']
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run eval:amibot
+      - run: node --test test/amibotEvals.test.js test/amibotEvalController.test.js test/amibotKnowledge.test.js test/amibotController.test.js test/amibotFallback.test.js

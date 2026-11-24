@@ -508,9 +508,10 @@ function chunkKnowledgeText(text = "", options = {}) {
   return records.flatMap((record) => chunkText(record, options));
 }
 
-function formatKnowledgeContext(chunks = [], maxChars = 7000) {
+function buildKnowledgeContext(chunks = [], maxChars = 7000) {
   let usedChars = 0;
   const formatted = [];
+  const includedChunks = [];
 
   for (const chunk of chunks) {
     const label = `Source: ${chunk.sourceName || "AmiBot knowledge"} | Chunk ${chunk.chunkIndex ?? "?"}`;
@@ -521,10 +522,15 @@ function formatKnowledgeContext(chunks = [], maxChars = 7000) {
 
     const available = Math.max(0, maxChars - usedChars);
     formatted.push(block.slice(0, available));
+    includedChunks.push({ ...chunk, contextText: block.slice(0, available), contextTruncated: block.length > available });
     usedChars += Math.min(block.length, available);
   }
 
-  return formatted.join("\n\n---\n\n");
+  return { context: formatted.join("\n\n---\n\n"), chunks: includedChunks };
+}
+
+function formatKnowledgeContext(chunks = [], maxChars = 7000) {
+  return buildKnowledgeContext(chunks, maxChars).context;
 }
 
 function parseStructuredAnswer(raw = "") {
@@ -558,6 +564,7 @@ function parseStructuredAnswer(raw = "") {
 }
 
 module.exports = {
+  buildKnowledgeContext,
   KNOWLEDGE_RECORD_SEPARATOR,
   chunkKnowledgeText,
   chunkText,
