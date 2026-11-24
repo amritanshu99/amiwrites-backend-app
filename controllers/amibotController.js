@@ -17,7 +17,7 @@ const {
 const {
   KNOWLEDGE_RECORD_SEPARATOR,
   chunkKnowledgeText,
-  formatKnowledgeContext,
+  buildKnowledgeContext,
   getDirectAmiBotReply,
   makeTokenRegex,
   normalizeQuestion,
@@ -128,6 +128,17 @@ function getSemanticWeight() {
     min: 0,
     max: 100,
   });
+}
+
+function getAmiBotRagConfig() {
+  return {
+    temperature: getAmiBotTemperature(),
+    embeddingsEnabled: getAmiBotEmbeddingsEnabled(),
+    topK: 8,
+    semanticMinScore: getSemanticMinScore(),
+    semanticWeight: getSemanticWeight(),
+    semanticCandidateLimit: getSemanticCandidateLimit(),
+  };
 }
 
 function getResendClient() {
@@ -402,7 +413,7 @@ function uniqueChunks(chunks = []) {
   return unique;
 }
 
-async function getSemanticQueryEmbedding(query, supplementalQuery = "") {
+async function getSemanticQueryEmbedding(query, supplementalQuery = "", diagnostics = []) {
   if (!getAmiBotEmbeddingsEnabled()) return [];
 
   const semanticQuery = [query, supplementalQuery]
@@ -420,12 +431,13 @@ async function getSemanticQueryEmbedding(query, supplementalQuery = "") {
     });
     return embedding;
   } catch (error) {
+    diagnostics.push("Query embedding failed; keyword retrieval was used.");
     console.error("AmiBot query embedding failed:", error.message || error);
     return [];
   }
 }
 
-async function findSemanticKnowledgeCandidates() {
+async function findSemanticKnowledgeCandidates(diagnostics = []) {
   if (!getAmiBotEmbeddingsEnabled()) return [];
 
   try {
@@ -436,6 +448,7 @@ async function findSemanticKnowledgeCandidates() {
       .limit(getSemanticCandidateLimit())
       .lean();
   } catch (error) {
+    diagnostics.push("Semantic candidate lookup failed.");
     console.error("AmiBot semantic candidate fetch failed:", error.message || error);
     return [];
   }
@@ -504,7 +517,7 @@ async function backfillKnowledgeEmbeddings(req, res) {
   }
 }
 
-async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" } = {}) {
+async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "", diagnostics = [] } = {}) {
   const primaryTokens = normalizeSearchTokens(query, { maxTokens: 24 });
   const supplementalTokens = normalizeSearchTokens(supplementalQuery, { maxTokens: 18 })
     .filter((token) => !primaryTokens.includes(token));
@@ -522,6 +535,7 @@ async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" 
         .limit(limit)
         .lean()
         .catch((error) => {
+          diagnostics.push("Keyword search failed.");
           console.error("AmiBot text search failed:", error.message || error);
           return [];
         })
@@ -529,7 +543,7 @@ async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" 
 
   const [textMatches, semanticCandidates] = await Promise.all([
     textMatchesPromise,
-    findSemanticKnowledgeCandidates(),
+    findSemanticKnowledgeCandidates(diagnostics),
   ]);
   chunks.push(...textMatches);
 
@@ -544,6 +558,7 @@ async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" 
             .limit(30)
             .lean();
         } catch (error) {
+          diagnostics.push("Fallback search failed.");
           console.error("AmiBot fallback search failed:", error.message || error);
           return [];
         }
@@ -551,7 +566,7 @@ async function findRelevantKnowledge(query, { limit = 8, supplementalQuery = "" 
     : Promise.resolve([]);
 
   const semanticEmbeddingPromise = semanticCandidates.length
-    ? getSemanticQueryEmbedding(query, supplementalQuery)
+    ? getSemanticQueryEmbedding(query, supplementalQuery, diagnostics)
     : Promise.resolve([]);
   const [fallbackMatches, semanticQueryEmbedding] = await Promise.all([
     fallbackMatchesPromise,
@@ -893,15 +908,14 @@ async function answerFromDirectReply(req, res, directReply) {
   );
 }
 
-async function answerFromKnowledge(req, res, query, relevantChunks, { conversationContext = "" } = {}) {
-  const context = formatKnowledgeContext(relevantChunks);
+async function generateKnowledgeAnswer(query, context, { conversationContext = "", voiceMode = false, language: voiceLanguage } = {}) {
   let prompt = buildGroundedPrompt({ query, context, conversationContext });
-  if (req.body?.voiceMode === true) {
-    const language = req.body.language === "hi" ? "Hindi (Devanagari)" : "English";
+  if (voiceMode === true) {
+    const language = voiceLanguage === "hi" ? "Hindi (Devanagari)" : "English";
     prompt += `\nThis answer will be spoken aloud. Reply in ${language}. For a simple question, give the direct answer in one natural sentence of about 10 to 20 words. Include the facts needed to answer the question; use up to 50 words when the user asks for details or multiple points. Avoid filler introductions, Markdown, tables, URLs, and long lists. Keep all grounding and answerability rules above.`;
   }
-  const { text } = await generateGeminiText(prompt, {
-    lowLatency: req.body?.voiceMode === true,
+  const { text, model } = await generateGeminiText(prompt, {
+    lowLatency: voiceMode === true,
     generationConfig: {
       temperature: getAmiBotTemperature(),
       topP: 0.9,
@@ -917,24 +931,68 @@ async function answerFromKnowledge(req, res, query, relevantChunks, { conversati
     },
   });
   const structuredAnswer = parseStructuredAnswer(text);
-  // Only an explicit, nonempty structured answer can be attributed to knowledge.
-  if (!structuredAnswer?.answerable || !structuredAnswer.answer) return null;
-  const answer = structuredAnswer.answer;
+  return { structuredAnswer, model };
+}
 
-  const sources = getSourcesFromChunks(relevantChunks);
-
-  await saveChatMessage(req.user, "bot", answer, {
-    answeredFromKnowledge: true,
-    sources,
+// Shared by chat and evals. This function never writes chat history, queues a
+// question, or sends email. Evals supply only their saved conversation history.
+async function resolveAmiBotAnswer(query, { history = [], voiceMode = false, language } = {}) {
+  const started = Date.now();
+  const direct = getDirectAmiBotReply(query);
+  if (direct) {
+    return {
+      answer: direct.answer,
+      outcome: "direct",
+      interactionType: direct.type,
+      chunks: [], sources: [], diagnostics: [],
+      latencyMs: Date.now() - started, retrievalMs: 0, generationMs: 0,
+    };
+  }
+  const messages = coerceConversationMessages(history, query);
+  const diagnostics = [];
+  const chunks = await findRelevantKnowledge(query, {
+    supplementalQuery: buildSupplementalKnowledgeQuery(messages),
+    diagnostics,
   });
-
-  return res.status(200).json(
-    buildChatResponse({
-      answer,
-      answeredFromKnowledge: true,
-      sources,
-    })
-  );
+  const retrievalMs = Date.now() - started;
+  const { context, chunks: contextChunks } = buildKnowledgeContext(chunks);
+  const trace = chunks.map((chunk, index) => {
+    const included = contextChunks.find((item) => String(item._id) === String(chunk._id));
+    return {
+      id: String(chunk._id),
+      sourceId: String(chunk.sourceId || ""),
+      sourceName: chunk.sourceName,
+      chunkIndex: chunk.chunkIndex,
+      rank: index + 1,
+      score: chunk.relevanceScore,
+      semanticScore: chunk.semanticScore,
+      text: chunk.chunkText,
+      contextText: included?.contextText || "",
+      contextTruncated: Boolean(included?.contextTruncated),
+    };
+  });
+  const generated = chunks.length
+    ? await generateKnowledgeAnswer(query, context, {
+        conversationContext: formatConversationContext(messages), voiceMode, language,
+      })
+    : {};
+  const structured = generated.structuredAnswer;
+  if (chunks.length && (!structured || (structured.answerable && !structured.answer))) {
+    diagnostics.push("The model did not return a valid, nonempty structured answer.");
+  }
+  const answered = Boolean(structured?.answerable && structured.answer);
+  const latencyMs = Date.now() - started;
+  return {
+    answer: answered ? structured.answer : UNKNOWN_GUEST_REPLY,
+    outcome: answered ? "knowledge" : "unknown",
+    chunks: trace,
+    sources: answered ? getSourcesFromChunks(contextChunks) : [],
+    diagnostics,
+    model: generated.model || null,
+    retrievalMs,
+    generationMs: latencyMs - retrievalMs,
+    latencyMs,
+  };
 }
 
 async function askAmibot(req, res) {
@@ -957,18 +1015,13 @@ async function askAmibot(req, res) {
     }
 
     const conversationMessages = await getConversationMessages(req, query);
-    const conversationContext = formatConversationContext(conversationMessages);
-    const supplementalQuery = buildSupplementalKnowledgeQuery(conversationMessages);
-    const relevantChunks = await findRelevantKnowledge(query, { supplementalQuery });
-
-    if (!relevantChunks.length) {
-      return await answerFromUnknownData(req, res, query);
-    }
-
-    const knowledgeResponse = await answerFromKnowledge(req, res, query, relevantChunks, {
-      conversationContext,
+    const result = await resolveAmiBotAnswer(query, {
+      history: conversationMessages, voiceMode: req.body?.voiceMode, language: req.body?.language,
     });
-    if (knowledgeResponse) return knowledgeResponse;
+    if (result.outcome === "knowledge") {
+      await saveChatMessage(req.user, "bot", result.answer, { answeredFromKnowledge: true, sources: result.sources });
+      return res.status(200).json(buildChatResponse({ answer: result.answer, answeredFromKnowledge: true, sources: result.sources }));
+    }
 
     return await answerFromUnknownData(req, res, query);
   } catch (err) {
@@ -1260,6 +1313,8 @@ module.exports = {
   closeAdminQuestion,
   deleteKnowledgeSource,
   findRelevantKnowledge,
+  resolveAmiBotAnswer,
+  getAmiBotRagConfig,
   getAmiBotHistory,
   handleAmiBotKnowledgeUpload,
   listAdminQuestions,

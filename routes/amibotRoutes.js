@@ -21,6 +21,18 @@ const { createRateLimiter } = require("../utils/security");
 const { browserVoiceStatus, browserVoiceReference, saveBrowserVoiceReference } = require("../controllers/amibotBrowserVoiceController");
 
 const router = express.Router();
+const evals = require("../controllers/amibotEvalController");
+const evalLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 90 });
+router.use("/admin/evals", authMiddleware, requireAdmin);
+router.get("/admin/evals/cases", evals.listCases);
+router.post("/admin/evals/cases", evals.saveCase);
+router.put("/admin/evals/cases/:id", evals.saveCase);
+router.delete("/admin/evals/cases/:id", evals.deleteCase);
+router.get("/admin/evals/evidence", evals.listEvidence);
+router.get("/admin/evals/runs", evals.listRuns);
+router.post("/admin/evals/runs", evalLimiter, evals.createRun);
+router.get("/admin/evals/runs/:id", evals.getRun);
+router.post("/admin/evals/runs/:id/cases/:caseId", evalLimiter, evals.executeCase);
 const voiceRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 120 });
 
 router.get("/voice/browser/status", browserVoiceStatus);
